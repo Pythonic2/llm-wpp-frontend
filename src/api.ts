@@ -15,8 +15,11 @@ import type {
   WhatsAppNumberInput,
 } from "./types";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || "https://llm-wpp.gestcloud.com.br/api/v1";
-export const apiOrigin = new URL(baseURL, "http://localhost").origin;
+const baseURL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+export const apiOrigin = new URL(
+  baseURL,
+  typeof window === "undefined" ? "http://localhost" : window.location.origin,
+).origin;
 let sessionEstablished = false;
 
 export const http = axios.create({

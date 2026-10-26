@@ -12,7 +12,7 @@ npm ci
 npm run dev
 ```
 
-O endereço padrão da API é `https://llm-wpp.gestcloud.com.br/api/v1` e pode ser substituído por `VITE_API_BASE_URL`. Para apontar para um backend local durante o desenvolvimento, configure `VITE_API_BASE_URL=http://localhost:8123/api/v1`. Nesse caso, o servidor Django deve permitir a origem do Vite em `FRONTEND_ORIGINS` e configurar `CSRF_TRUSTED_ORIGINS` a partir da mesma variável.
+O endereço padrão da API é `/api/v1`, encaminhado pelo Nginx de produção ao serviço `backend:8123`. No desenvolvimento com Vite, configure `VITE_API_BASE_URL=http://192.168.0.7:8123/api/v1`. Nesse caso, o servidor Django deve permitir a origem do Vite em `FRONTEND_ORIGINS` e configurar `CSRF_TRUSTED_ORIGINS` a partir da mesma variável.
 
 Também é possível iniciar frontend e backend juntos usando o Compose do backend:
 
@@ -31,7 +31,7 @@ No servidor, implante este projeto pelo Portainer ou copie-o e execute:
 docker compose up --build -d
 ```
 
-O Compose constrói a versão de produção, servida por Nginx na porta 80 dentro da rede Docker externa `pi_default`, como no Compose do backend. O proxy reverso conectado a essa rede deve encaminhar o domínio do frontend ao serviço `frontend` na porta 80. A API padrão é `https://llm-wpp.gestcloud.com.br/api/v1`; para substituí-la, defina `VITE_API_BASE_URL` nas variáveis do stack antes do build.
+O Compose constrói a versão de produção, servida por Nginx na porta 80 do container e publicada na porta 8080 do host. Abra `http://IP-DO-SERVIDOR:8080`. O Nginx encaminha `/api/` ao serviço `backend:8123` pela rede Docker externa `pi_default`.
 
 ## Qualidade
 
