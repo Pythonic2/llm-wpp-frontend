@@ -1,0 +1,145 @@
+.closed-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  color: #77819a;
+  font-size: 9px;
+}
+
+.session-expired-note {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid #f1e2c6;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #99713d;
+  font-size: 11px;
+}
+
+.closed-filter input {
+  accent-color: #5868e8;
+}
+
+.conversation-assignee {
+  overflow: hidden;
+  color: #a0a6b5;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-row-actions,
+.number-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.number-actions {
+  justify-content: flex-end;
+  margin-top: 13px;
+}
+
+.number-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.number-card > p + p {
+  margin-top: 5px;
+}
+
+.base-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.base-rename-form input,
+.document-title-field input {
+  min-width: 0;
+  height: 35px;
+  padding: 0 10px;
+  border: 1px solid #e6e8ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #303a54;
+  font: inherit;
+  font-size: 10px;
+}
+
+.base-rename-form input {
+  width: min(100%, 240px);
+}
+
+.document-title-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0 9px;
+  color: #768098;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.document-title-field input {
+  width: 100%;
+}
+
+.lead-stage-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.lead-stage-editor > label {
+  width: 100%;
+}
+
+.webhook-copy-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.webhook-copy-row .webhook-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.copy-feedback {
+  display: block;
+  margin: -8px 0 12px;
+  color: #5967d9;
+  font-size: 10px;
+}
+
+.message-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.message-meta .read-check {
+  color: #6573dc;
+}
+
+@media (max-width: 580px) {
+  .webhook-copy-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .webhook-copy-row > button {
+    align-self: flex-end;
+  }
+
+  .base-rename-form {
+    flex-wrap: wrap;
+  }
+}
