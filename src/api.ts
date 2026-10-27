@@ -179,8 +179,15 @@ export async function listMessages(companyId: string, conversationId: number, pa
   return data;
 }
 
+function idempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export async function sendMessage(companyId: string, conversationId: number, text: string): Promise<Message> {
-  const config: AxiosRequestConfig = { headers: { "Idempotency-Key": crypto.randomUUID() } };
+  const config: AxiosRequestConfig = { headers: { "Idempotency-Key": idempotencyKey() } };
   const { data } = await http.post<Message>(
     companyPath(companyId, `conversations/${conversationId}/messages/`),
     { text },
