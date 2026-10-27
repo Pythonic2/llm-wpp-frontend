@@ -106,5 +106,10 @@ describe("session API contract", () => {
 
     expect(keys).toHaveLength(2);
     expect(new Set(keys).size).toBe(2);
+    for (const key of keys) {
+      expect(key).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    }
   });
 });
