@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.production
+      no_cache: true
+      pull: true
     restart: unless-stopped
     ports:
       - "8080:80"
