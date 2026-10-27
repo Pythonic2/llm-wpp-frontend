@@ -22,6 +22,7 @@ import {
   CircleHelp,
   Clock3,
   FileText,
+  Flame,
   Headphones,
   LayoutDashboard,
   LoaderCircle,
@@ -39,6 +40,7 @@ import {
   Shield,
   Smartphone,
   Sparkles,
+  Target,
   Users,
   X,
 } from "lucide-react";
@@ -123,6 +125,7 @@ const statusLabel: Record<ConversationStatus, string> = {
   qualified: "Qualificada",
   closed: "Encerrada",
 };
+const temperatureLabel = { unknown: "Não analisada", hot: "Quente", warm: "Morna", cold: "Fria" } as const;
 const documentLabel: Record<DocumentStatus, string> = {
   pending: "Na fila",
   processing: "Processando",
@@ -431,6 +434,8 @@ function DashboardPage() {
     { label: "Conversas abertas", value: data.open_conversations, icon: MessageCircle, tone: "blue" },
     { label: "Atendimento humano", value: data.human_conversations, icon: Headphones, tone: "peach" },
     { label: "Atendidas pela IA", value: data.ai_conversations, icon: Sparkles, tone: "green" },
+    { label: "Leads quentes", value: data.hot_leads ?? 0, icon: Flame, tone: "peach" },
+    { label: "Follow-ups pendentes", value: data.follow_ups_due ?? 0, icon: Target, tone: "lavender" },
     { label: "Mensagens recebidas", value: data.inbound_messages, icon: ArrowDownLeft, tone: "blue" },
     { label: "Mensagens enviadas", value: data.outbound_messages, icon: Send, tone: "lavender" },
     { label: "Documentos processando", value: data.documents_processing, icon: Clock3, tone: "peach" },
@@ -444,6 +449,13 @@ function DashboardPage() {
       ))}</section>
       <section className="dashboard-grid">
         <div className="panel recent-panel">
+          <div className="follow-up-heading"><div><span className="follow-up-alert"><Target size={14} /> OPORTUNIDADES PARA RETOMAR</span><h2>Follow-ups pendentes</h2><p>Leads com potencial que ainda não fecharam.</p></div><strong>{data.follow_ups_due ?? 0}</strong></div>
+          {(data.follow_up_conversations ?? []).length ? <div className="follow-up-list">{(data.follow_up_conversations ?? []).map((conversation) => <Link className={`follow-up-card follow-up-${conversation.lead_temperature}`} key={conversation.id} to={`/inbox?conversation=${conversation.id}`}>
+            <span className="follow-up-pulse" /><span className="contact-avatar">{(conversation.contact.name || conversation.contact.phone || "?").slice(0, 1).toUpperCase()}</span>
+            <span className="follow-up-copy"><strong>{conversation.contact.name || formatPhone(conversation.contact.phone || conversation.contact.wa_id)}</strong><small>{conversation.recommended_action || conversation.analysis_summary || "Retomar contato comercial"}</small></span>
+            <span className={`temperature-pill temperature-${conversation.lead_temperature ?? "unknown"}`}>{temperatureLabel[conversation.lead_temperature ?? "unknown"]} · {conversation.purchase_intent_score ?? 0}%</span><ArrowRight size={15} />
+          </Link>)}</div> : <div className="follow-up-clear"><Check size={16} /> Nenhum follow-up vencido agora.</div>}
+          <div className="panel-divider" />
           <div className="panel-heading"><div><h2>Conversas recentes</h2><p>Os atendimentos mais recentes da sua equipe.</p></div><Link className="text-link" to="/inbox">Ver todas <ArrowRight size={14} /></Link></div>
           {data.recent_conversations.length ? <div className="recent-list">{data.recent_conversations.map((conversation) => (
             <Link className="recent-row" key={conversation.id} to={`/inbox?conversation=${conversation.id}`}>
@@ -529,7 +541,7 @@ function InboxPage() {
     }
   };
   const action = useMutation({
-    mutationFn: ({ name, payload }: { name: "pause-ai" | "resume-ai" | "close" | "reopen" | "assign"; payload?: Record<string, unknown> }) =>
+    mutationFn: ({ name, payload }: { name: "pause-ai" | "resume-ai" | "close" | "reopen" | "assign" | "analyze" | "mark-won" | "mark-lost" | "reopen-opportunity" | "complete-follow-up" | "snooze-follow-up"; payload?: Record<string, unknown> }) =>
       conversationAction(companyId, selectedId ?? 0, name, payload),
     onSuccess: () => { setActionError(""); refreshConversation(); },
     onError: (error: unknown) => setActionError(errorMessage(error)),
@@ -593,7 +605,7 @@ function InboxPage() {
           <div className="conversation-items">
             {list.isPending ? <Loading label="Buscando conversas…" /> : list.isError ? <ErrorNotice error={list.error} retry={() => void list.refetch()} /> : conversations.length ? conversations.map((item) => <button className={`conversation-item ${item.id === selectedId ? "conversation-selected" : ""}`} key={item.id} onClick={() => selectConversation(item.id)}>
               <span className="contact-avatar">{(item.contact.name || item.contact.phone || "?").slice(0, 1).toUpperCase()}</span>
-              <span className="conversation-copy"><span className="conversation-line"><strong>{item.contact.name || formatPhone(item.contact.phone || item.contact.wa_id)}</strong><small>{formatTime(item.last_message_at || item.created_at)}</small></span><span className="conversation-preview">{item.lead_stage || formatPhone(item.contact.phone || item.contact.wa_id)}</span><span className="conversation-tags"><Badge tone={item.ai_paused ? "peach" : "green"}>{item.ai_paused ? "Humano" : "IA"}</Badge><Badge tone={item.status === "closed" ? "neutral" : "brand"}>{statusLabel[item.status]}</Badge></span><span className="conversation-assignee">{item.assigned_to ? `Atendente: ${displayName(item.assigned_to)}` : "Sem responsável"}</span></span>
+              <span className="conversation-copy"><span className="conversation-line"><strong>{item.contact.name || formatPhone(item.contact.phone || item.contact.wa_id)}</strong><small>{formatTime(item.last_message_at || item.created_at)}</small></span><span className="conversation-preview">{item.lead_stage || formatPhone(item.contact.phone || item.contact.wa_id)}</span><span className="conversation-tags"><Badge tone={item.ai_paused ? "peach" : "green"}>{item.ai_paused ? "Humano" : "IA"}</Badge><Badge tone={item.status === "closed" ? "neutral" : "brand"}>{statusLabel[item.status]}</Badge>{item.lead_temperature && item.lead_temperature !== "unknown" && <span className={`temperature-pill temperature-${item.lead_temperature}`}>{temperatureLabel[item.lead_temperature]}</span>}</span><span className="conversation-assignee">{item.assigned_to ? `Atendente: ${displayName(item.assigned_to)}` : "Sem responsável"}</span></span>
             </button>) : <Empty icon={MessageCircle} title="Nenhuma conversa" text="Ajuste os filtros ou aguarde novas mensagens." />}
           </div>
           {list.data && <Pagination page={page} count={list.data.count} onPage={setPage} />}
@@ -613,6 +625,8 @@ function InboxPage() {
           <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (message.trim() && selected && selected.status !== "closed" && !send.isPending) send.mutate(message.trim()); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{send.isError && <small className="field-error">{errorMessage(send.error)}</small>}</form>
         </section> : <section className="chat-panel panel chat-no-selection">{conversationDetail.isError && selectedId ? <ErrorNotice error={conversationDetail.error} retry={() => void conversationDetail.refetch()} /> : <Empty icon={MessageCircle} title="Escolha uma conversa" text="Selecione uma conversa à esquerda para ver as mensagens e iniciar o atendimento." />}</section>}
         {selected && <aside className="contact-panel panel"><div className="contact-panel-title"><h2>Detalhes</h2></div><div className="contact-profile"><span className="contact-avatar contact-avatar-large">{(selected.contact.name || selected.contact.phone || "?").slice(0, 1).toUpperCase()}</span><strong>{selected.contact.name || formatPhone(selected.contact.phone || selected.contact.wa_id)}</strong><span>{formatPhone(selected.contact.phone || selected.contact.wa_id)}</span><Badge tone={selected.status === "closed" ? "neutral" : "brand"}>{statusLabel[selected.status]}</Badge></div>
+          <div className="detail-section sales-analysis"><span className="detail-label">ANÁLISE COMERCIAL DA IA</span><div className="analysis-score"><span className={`temperature-pill temperature-${selected.lead_temperature ?? "unknown"}`}>{temperatureLabel[selected.lead_temperature ?? "unknown"]}</span><strong>{selected.purchase_intent_score ?? 0}%</strong></div>{selected.analysis_summary && <p>{selected.analysis_summary}</p>}{(selected.buying_signals ?? []).length > 0 && <div><small>Sinais de compra</small><ul>{(selected.buying_signals ?? []).map((signal) => <li key={signal}>{signal}</li>)}</ul></div>}{(selected.objections ?? []).length > 0 && <div><small>Objeções</small><ul>{(selected.objections ?? []).map((objection) => <li key={objection}>{objection}</li>)}</ul></div>}{selected.recommended_action && <div className="recommended-action"><Target size={13} /><span>{selected.recommended_action}</span></div>}<button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "analyze" })}><RefreshCw size={13} /> Reanalisar</button></div>
+          {selected.opportunity_status === "open" && selected.lead_temperature && selected.lead_temperature !== "unknown" && <div className="detail-section"><span className="detail-label">FOLLOW-UP</span>{selected.next_follow_up_at && <p className="follow-up-date"><Clock3 size={13} /> Retorno em {formatDate(selected.next_follow_up_at)}</p>}<button className="button button-primary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "complete-follow-up" })}><Check size={13} /> Follow-up realizado</button><button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "snooze-follow-up", payload: { days: 3 } })}><Clock3 size={13} /> Adiar 3 dias</button><div className="opportunity-actions"><button disabled={action.isPending} onClick={() => action.mutate({ name: "mark-won" })}>Marcar como ganha</button><button disabled={action.isPending} onClick={() => action.mutate({ name: "mark-lost" })}>Marcar como perdida</button></div></div>}
           <div className="detail-section"><span className="detail-label">ATENDIMENTO</span><label className="detail-control">Responsável<select aria-label="Responsável da conversa" value={selected.assigned_to?.id ?? ""} disabled={action.isPending} onChange={(event) => action.mutate({ name: "assign", payload: { user_id: event.target.value || null } })}><option value="">Não atribuído</option>{members.data?.map((member) => <option value={member.user.id} key={member.id}>{displayName(member.user)}</option>)}{session.user && !members.data?.some((item) => item.user.id === session.user.id) && <option value={session.user.id}>{displayName(session.user)}</option>}</select></label>{selected.assigned_to?.id !== session.user.id && <button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "assign", payload: { user_id: session.user.id } })}>Assumir conversa</button>}<label className="detail-control">Status<select aria-label="Status da conversa" value={selected.status} disabled={update.isPending} onChange={(event) => update.mutate({ status: event.target.value })}><option value="open">Aberta</option><option value="qualifying">Em qualificação</option><option value="qualified">Qualificada</option><option value="closed">Encerrada</option></select></label><LeadStageEditor key={`${selected.id}-${selected.lead_stage}`} value={selected.lead_stage} disabled={update.isPending} onSave={(lead_stage) => update.mutate({ lead_stage })} /><label className="detail-control">Dados do lead (JSON)<LeadDataEditor key={`${selected.id}-${JSON.stringify(selected.lead_data)}`} data={selected.lead_data} disabled={update.isPending} onSave={(value) => update.mutate({ lead_data: value })} /></label></div>
           <div className="detail-section"><span className="detail-label">AÇÕES</span><button className="detail-action" disabled={action.isPending} onClick={() => action.mutate({ name: selected.ai_paused ? "resume-ai" : "pause-ai" })}>{selected.ai_paused ? <><Play size={15} /> Reativar IA</> : <><Pause size={15} /> Pausar IA</>}</button><button className="detail-action danger-action" disabled={action.isPending} onClick={() => { if (window.confirm(selected.status === "closed" ? "Reabrir esta conversa?" : "Encerrar esta conversa?")) action.mutate({ name: selected.status === "closed" ? "reopen" : "close" }); }}>{selected.status === "closed" ? <><Play size={15} /> Reabrir conversa</> : <><X size={15} /> Encerrar conversa</>}</button></div>
           <div className="detail-foot"><Phone size={14} /> WhatsApp · contato #{selected.contact.id}</div>

@@ -212,7 +212,7 @@ export async function sendMessage(companyId: string, conversationId: number, tex
 export async function conversationAction(
   companyId: string,
   conversationId: number,
-  action: "pause-ai" | "resume-ai" | "close" | "reopen" | "assign",
+  action: "pause-ai" | "resume-ai" | "close" | "reopen" | "assign" | "analyze" | "mark-won" | "mark-lost" | "reopen-opportunity" | "complete-follow-up" | "snooze-follow-up",
   data: Record<string, unknown> = {},
 ): Promise<Conversation> {
   const { data: result } = await http.post<Conversation>(

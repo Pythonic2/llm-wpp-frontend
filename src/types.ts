@@ -1,5 +1,7 @@
 export type Role = "owner" | "admin" | "agent";
 export type ConversationStatus = "open" | "qualifying" | "qualified" | "closed";
+export type LeadTemperature = "unknown" | "hot" | "warm" | "cold";
+export type OpportunityStatus = "open" | "won" | "lost";
 export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
 
 export interface User {
@@ -51,6 +53,16 @@ export interface Conversation {
   status: ConversationStatus;
   lead_stage: string;
   lead_data: Record<string, unknown>;
+  lead_temperature?: LeadTemperature;
+  purchase_intent_score?: number;
+  analysis_summary?: string;
+  buying_signals?: string[];
+  objections?: string[];
+  recommended_action?: string;
+  analyzed_at?: string | null;
+  opportunity_status?: OpportunityStatus;
+  next_follow_up_at?: string | null;
+  follow_up_completed_at?: string | null;
   ai_paused: boolean;
   ai_paused_at: string | null;
   assigned_to: User | null;
@@ -79,6 +91,10 @@ export interface Dashboard {
   outbound_messages: number;
   documents_processing: number;
   documents_failed: number;
+  hot_leads?: number;
+  warm_leads?: number;
+  follow_ups_due?: number;
+  follow_up_conversations?: Conversation[];
   recent_conversations: Conversation[];
 }
 
