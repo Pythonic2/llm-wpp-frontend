@@ -149,6 +149,13 @@ export async function getCompany(companyId: string): Promise<Company> {
   return data;
 }
 
+export async function updateCompanyAIInstructions(companyId: string, aiInstructions: string): Promise<Company> {
+  const { data } = await http.patch<Company>(companyPath(companyId), {
+    ai_instructions: aiInstructions,
+  });
+  return data;
+}
+
 export async function getDashboard(companyId: string): Promise<Dashboard> {
   const { data } = await http.get<Dashboard>(companyPath(companyId, "dashboard/"));
   return data;

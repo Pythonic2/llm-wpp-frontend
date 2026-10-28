@@ -83,6 +83,7 @@ import {
   removeMember,
   sendMessage,
   updateContact,
+  updateCompanyAIInstructions,
   updateConversation,
   updateKnowledgeBase,
   updateMember,
@@ -1003,7 +1004,21 @@ function SettingsPage() {
   const { company, session } = useApp();
   const companyId = company?.id ?? "";
   const [copyFeedback, setCopyFeedback] = useState("");
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [promptFeedback, setPromptFeedback] = useState("");
   const query = useQuery({ queryKey: queryKeys.company(companyId), queryFn: () => getCompany(companyId), enabled: !!companyId });
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (query.data?.ai_instructions !== undefined) setAiInstructions(query.data.ai_instructions);
+  }, [query.data?.ai_instructions]);
+  const saveInstructions = useMutation({
+    mutationFn: () => updateCompanyAIInstructions(companyId, aiInstructions.trim()),
+    onSuccess: async () => {
+      setPromptFeedback("Instruções salvas. As próximas respostas da IA usarão esta configuração.");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.company(companyId) });
+    },
+    onError: (error: unknown) => setPromptFeedback(errorMessage(error)),
+  });
   if (query.isPending) return <Loading />;
   if (query.isError) return <ErrorNotice error={query.error} retry={() => void query.refetch()} />;
   const data = query.data;
@@ -1019,9 +1034,14 @@ function SettingsPage() {
   return <div className="page-stack"><PageTitle eyebrow="SUA ORGANIZAÇÃO" title="Configurações" description="Informações da empresa e situação das integrações conectadas." />
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Building2 size={18} /></span><div><h2>Dados da empresa</h2><p>Identificação do espaço de trabalho.</p></div></div><div className="settings-fields"><label>Nome da empresa<input value={data.name} readOnly /></label><label>Identificador<input value={data.slug} readOnly /></label><label>Papel do usuário<input value={roleLabel[company?.role ?? "agent"]} readOnly /></label><label>Usuário<input value={session.user.username} readOnly /></label><label>ID da empresa<input value={data.id} readOnly /></label><label>Desde<input value={formatDate(data.created_at)} readOnly /></label></div><div className="settings-note"><Shield size={16} /> Os dados cadastrais são gerenciados pelo administrador do sistema.</div></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Integrações</h2><p>Conexões configuradas no servidor, sem exposição de credenciais.</p></div></div><div className="integration-row"><span className="integration-logo whats-logo"><MessageCircle size={19} /></span><span><strong>WhatsApp Cloud API</strong><small>Integração para envio e recebimento de mensagens.</small></span><Badge tone={data.integrations?.whatsapp_configured ? "green" : "peach"}>{data.integrations?.whatsapp_configured ? "Configurada" : "Pendente"}</Badge></div><div className="integration-row"><span className="integration-logo gemini-logo"><Sparkles size={19} /></span><span><strong>Google Gemini</strong><small>Geração de respostas e embeddings para busca RAG.</small></span><Badge tone={data.integrations?.gemini_configured ? "green" : "peach"}>{data.integrations?.gemini_configured ? "Configurada" : "Pendente"}</Badge></div></section>
+    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Personalidade da IA</h2><p>Defina como a IA deve atender os clientes desta empresa.</p></div></div><form className="ai-instructions-form" onSubmit={(event) => { event.preventDefault(); setPromptFeedback(""); if (aiInstructions.trim()) saveInstructions.mutate(); }}><label>Instruções de atendimento<textarea aria-label="Instruções de atendimento da IA" value={aiInstructions} maxLength={8000} rows={9} onChange={(event) => { setAiInstructions(event.target.value); setPromptFeedback(""); }} /><span className="prompt-counter">{aiInstructions.length}/8000 caracteres</span></label><div className="prompt-guidance"><strong>Como escrever um bom prompt</strong><p>Explique o papel da IA, o tipo de cliente, o tom de voz, os objetivos do atendimento e o que ela deve evitar. Não inclua senhas, tokens ou dados pessoais.</p><p>Você pode pedir a uma IA: “Crie instruções para um atendente virtual de [seu nicho], com tom [formal, acolhedor, urgente…], que deve [objetivos] e nunca deve [limites]”.</p></div><div className="prompt-actions"><button className="button button-secondary" type="button" onClick={() => { setAiInstructions(DEFAULT_AI_INSTRUCTIONS_EXAMPLE); setPromptFeedback(""); }}>Usar exemplo genérico</button><button className="button button-primary" type="submit" disabled={!aiInstructions.trim() || saveInstructions.isPending}>{saveInstructions.isPending ? "Salvando…" : "Salvar instruções"}</button></div>{promptFeedback && <small className={saveInstructions.isError ? "field-error" : "copy-feedback"} role="status">{promptFeedback}</small>}<div className="settings-note"><Shield size={16} /> Regras de segurança, isolamento entre empresas e uso exclusivo da base de conhecimento continuam protegidas pelo sistema.</div></form></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Shield size={18} /></span><div><h2>Webhook da Meta</h2><p>Cadastre este endereço na configuração do aplicativo da Meta.</p></div></div><div className="webhook-copy-row"><label className="webhook-field">URL do webhook<input readOnly value={webhookUrl} /></label><button className="button button-secondary button-small" onClick={() => void copyWebhook()}>Copiar URL</button></div>{copyFeedback && <small role="status" className="copy-feedback">{copyFeedback}</small>}<div className="settings-note"><CircleHelp size={16} /> No painel da Meta, configure esta URL pública (HTTPS) como callback do webhook e assine os eventos de mensagens. O token de verificação e o segredo permanecem no servidor; não há conexão fictícia ou cadastro automático de número.</div></section>
   </div>;
 }
+
+const DEFAULT_AI_INSTRUCTIONS_EXAMPLE = `Atue como uma pessoa da equipe de atendimento da empresa e responda em português do Brasil.
+Seja natural, cordial, direto e prestativo. Responda como quem conhece a empresa e adapte o nível de detalhe à dúvida do cliente.
+Não diga nem insinue que você consultou documentos, um sistema, uma base de conhecimento ou um contexto fornecido.`;
 
 function ProtectedApp({ session }: { session: Session }) {
   const location = useLocation();

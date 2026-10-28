@@ -18,6 +18,7 @@ export interface Company {
   slug: string;
   created_at: string;
   role: Role;
+  ai_instructions?: string;
   integrations?: {
     whatsapp_configured: boolean;
     gemini_configured: boolean;
