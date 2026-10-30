@@ -12,6 +12,9 @@ ENV VITE_API_BASE_URL=/api/v1
 RUN npm run build
 
 FROM nginx:alpine
+ARG APP_COMMIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$APP_COMMIT_SHA
+ENV APP_COMMIT_SHA=$APP_COMMIT_SHA
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
