@@ -261,7 +261,7 @@ describe("Gest Tech protected app", () => {
     });
     vi.mocked(api.listMessages).mockImplementation(async (_companyId, _conversationId, page) => page === 1
       ? {
-        count: 51, next: "http://192.168.0.7:8123/api/v1/messages/?page=2", previous: null, results: [{
+        count: 51, next: "http://192.168.0.6:8123/api/v1/messages/?page=2", previous: null, results: [{
           id: 1,
           external_id: "wamid-older",
           direction: "in",
@@ -274,7 +274,7 @@ describe("Gest Tech protected app", () => {
         }]
       }
       : {
-        count: 51, next: null, previous: "http://192.168.0.7:8123/api/v1/messages/?page=1", results: [{
+        count: 51, next: null, previous: "http://192.168.0.6:8123/api/v1/messages/?page=1", results: [{
           id: 51,
           external_id: "wamid-latest",
           direction: "out",
