@@ -6,6 +6,8 @@ import type {
   Dashboard,
   KnowledgeBase,
   KnowledgeDocument,
+  MediaAsset,
+  MediaCategory,
   Membership,
   Message,
   Page,
@@ -337,6 +339,88 @@ export async function reprocessDocument(companyId: string, baseId: number, docum
     companyPath(companyId, `knowledge-bases/${baseId}/documents/${documentId}/reprocess/`),
   );
   return data;
+}
+
+export async function listMediaCategories(companyId: string): Promise<MediaCategory[]> {
+  const { data } = await http.get<MediaCategory[]>(companyPath(companyId, "media-categories/"));
+  return data;
+}
+
+export async function createMediaCategory(
+  companyId: string,
+  values: Pick<MediaCategory, "name" | "parent">,
+): Promise<MediaCategory> {
+  const { data } = await http.post<MediaCategory>(companyPath(companyId, "media-categories/"), values);
+  return data;
+}
+
+export async function updateMediaCategory(
+  companyId: string,
+  categoryId: number,
+  values: Partial<Pick<MediaCategory, "name" | "parent">>,
+): Promise<MediaCategory> {
+  const { data } = await http.patch<MediaCategory>(
+    companyPath(companyId, `media-categories/${categoryId}/`),
+    values,
+  );
+  return data;
+}
+
+export async function deleteMediaCategory(companyId: string, categoryId: number): Promise<void> {
+  await http.delete(companyPath(companyId, `media-categories/${categoryId}/`));
+}
+
+export async function listMediaAssets(
+  companyId: string,
+  params: Record<string, string | number> = {},
+): Promise<Page<MediaAsset>> {
+  const { data } = await http.get<Page<MediaAsset>>(companyPath(companyId, "media-assets/"), { params });
+  return data;
+}
+
+export interface MediaAssetInput {
+  name: string;
+  description: string;
+  category: number | null;
+  tags: string[];
+  keywords: string[];
+  product_service: string;
+  search_text: string;
+  is_active: boolean;
+  allow_ai_send: boolean;
+}
+
+export async function createMediaAsset(
+  companyId: string,
+  values: MediaAssetInput,
+  file: File,
+): Promise<MediaAsset> {
+  const body = new FormData();
+  body.set("name", values.name);
+  body.set("description", values.description);
+  if (values.category !== null) body.set("category", String(values.category));
+  body.set("tags", JSON.stringify(values.tags));
+  body.set("keywords", JSON.stringify(values.keywords));
+  body.set("product_service", values.product_service);
+  body.set("search_text", values.search_text);
+  body.set("is_active", String(values.is_active));
+  body.set("allow_ai_send", String(values.allow_ai_send));
+  body.set("file", file);
+  const { data } = await http.post<MediaAsset>(companyPath(companyId, "media-assets/"), body);
+  return data;
+}
+
+export async function updateMediaAsset(
+  companyId: string,
+  assetId: string,
+  values: MediaAssetInput,
+): Promise<MediaAsset> {
+  const { data } = await http.patch<MediaAsset>(companyPath(companyId, `media-assets/${assetId}/`), values);
+  return data;
+}
+
+export async function deleteMediaAsset(companyId: string, assetId: string): Promise<void> {
+  await http.delete(companyPath(companyId, `media-assets/${assetId}/`));
 }
 
 export async function listNumbers(companyId: string, params: Record<string, string | number> = {}) {

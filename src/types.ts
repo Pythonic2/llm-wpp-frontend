@@ -115,6 +115,40 @@ export interface KnowledgeDocument {
   created_at: string;
 }
 
+export type MediaFileType = "image" | "video" | "document";
+export type MediaStatus = "pending" | "ready" | "failed";
+
+export interface MediaCategory {
+  id: number;
+  name: string;
+  parent: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  name: string;
+  description: string;
+  category: number | null;
+  category_name: string | null;
+  tags: string[];
+  keywords: string[];
+  download_url: string;
+  file_type: MediaFileType;
+  mime_type: string;
+  size: number;
+  product_service: string;
+  search_text: string;
+  is_active: boolean;
+  allow_ai_send: boolean;
+  status: MediaStatus;
+  error: string;
+  meta_media_status: "missing" | "valid" | "expired" | "failed";
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WhatsAppNumber {
   id: number;
   phone_number_id: string;

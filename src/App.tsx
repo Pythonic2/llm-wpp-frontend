@@ -22,8 +22,11 @@ import {
   CircleHelp,
   Clock3,
   FileText,
+  Film,
   Flame,
+  FolderTree,
   Headphones,
+  ImageIcon,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
@@ -41,6 +44,7 @@ import {
   Smartphone,
   Sparkles,
   Target,
+  UploadCloud,
   Users,
   X,
 } from "lucide-react";
@@ -54,10 +58,14 @@ import {
   conversationAction,
   createContact,
   createKnowledgeBase,
+  createMediaAsset,
+  createMediaCategory,
   createNumber,
   deleteContact,
   deleteDocument,
   deleteKnowledgeBase,
+  deleteMediaAsset,
+  deleteMediaCategory,
   deleteNumber,
   errorMessage,
   getContact,
@@ -73,6 +81,8 @@ import {
   listConversations,
   listDocuments,
   listKnowledgeBases,
+  listMediaAssets,
+  listMediaCategories,
   listMembers,
   listMessages,
   listNumbers,
@@ -86,6 +96,7 @@ import {
   updateCompanyAIInstructions,
   updateConversation,
   updateKnowledgeBase,
+  updateMediaAsset,
   updateMember,
   updateNumber,
   uploadDocumentWithTitle,
@@ -98,6 +109,8 @@ import type {
   DocumentStatus,
   KnowledgeBase,
   KnowledgeDocument,
+  MediaAsset,
+  MediaCategory,
   Membership,
   Message,
   Role,
@@ -143,6 +156,8 @@ const queryKeys = {
   contacts: (company: string, params: Record<string, string | number>) => ["contacts", company, params] as const,
   bases: (company: string) => ["knowledge-bases", company] as const,
   documents: (company: string, base: number) => ["documents", company, base] as const,
+  mediaCategories: (company: string) => ["media-categories", company] as const,
+  mediaAssets: (company: string, filters: Record<string, string | number>) => ["media-assets", company, filters] as const,
   numbers: (company: string) => ["numbers", company] as const,
   members: (company: string) => ["members", company] as const,
   company: (company: string) => ["company", company] as const,
@@ -339,6 +354,7 @@ const navItems = [
   { to: "/inbox", label: "Caixa de entrada", icon: MessageCircle },
   { to: "/contacts", label: "Contatos", icon: Users },
   { to: "/knowledge", label: "Conhecimento", icon: BookOpen, admin: true },
+  { to: "/media", label: "Mídias da IA", icon: ImageIcon, admin: true },
   { to: "/numbers", label: "WhatsApp", icon: Smartphone },
   { to: "/team", label: "Equipe", icon: Users, admin: true },
   { to: "/settings", label: "Configurações", icon: Settings, admin: true },
@@ -861,6 +877,158 @@ function KnowledgePage() {
   </div>;
 }
 
+type MediaFormState = {
+  name: string;
+  description: string;
+  category: number | null;
+  tags: string;
+  keywords: string;
+  product_service: string;
+  search_text: string;
+  is_active: boolean;
+  allow_ai_send: boolean;
+};
+
+const EMPTY_MEDIA_FORM: MediaFormState = {
+  name: "",
+  description: "",
+  category: null,
+  tags: "",
+  keywords: "",
+  product_service: "",
+  search_text: "",
+  is_active: true,
+  allow_ai_send: false,
+};
+
+function commaList(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function mediaForm(asset: MediaAsset): MediaFormState {
+  return {
+    name: asset.name,
+    description: asset.description,
+    category: asset.category,
+    tags: asset.tags.join(", "),
+    keywords: asset.keywords.join(", "),
+    product_service: asset.product_service,
+    search_text: asset.search_text,
+    is_active: asset.is_active,
+    allow_ai_send: asset.allow_ai_send,
+  };
+}
+
+function MediaLibraryPage() {
+  const { company } = useApp();
+  const companyId = company?.id ?? "";
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<number | "">("");
+  const [fileType, setFileType] = useState("");
+  const [page, setPage] = useState(1);
+  const [categoryName, setCategoryName] = useState("");
+  const [editing, setEditing] = useState<MediaAsset | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState<MediaFormState>(EMPTY_MEDIA_FORM);
+  const [file, setFile] = useState<File | null>(null);
+  const [formError, setFormError] = useState("");
+  const filters: Record<string, string | number> = { page };
+  if (search.trim()) filters.q = search.trim();
+  if (category !== "") filters.category = category;
+  if (fileType) filters.file_type = fileType;
+
+  const categories = useQuery({
+    queryKey: queryKeys.mediaCategories(companyId),
+    queryFn: () => listMediaCategories(companyId),
+    enabled: !!companyId,
+  });
+  const assets = useQuery({
+    queryKey: queryKeys.mediaAssets(companyId, filters),
+    queryFn: () => listMediaAssets(companyId, filters),
+    enabled: !!companyId,
+    refetchInterval: (query) => query.state.data?.results.some((asset) => asset.status === "pending") ? 4_000 : false,
+  });
+  const invalidateCategories = () => queryClient.invalidateQueries({ queryKey: queryKeys.mediaCategories(companyId) });
+  const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: ["media-assets", companyId] });
+  const createCategory = useMutation({
+    mutationFn: () => createMediaCategory(companyId, { name: categoryName.trim(), parent: null }),
+    onSuccess: async () => { setCategoryName(""); await invalidateCategories(); },
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const removeCategory = useMutation({
+    mutationFn: (item: MediaCategory) => deleteMediaCategory(companyId, item.id),
+    onSuccess: async (_, item) => { if (category === item.id) setCategory(""); await invalidateCategories(); },
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const saveAsset = useMutation({
+    mutationFn: () => {
+      const values = {
+        ...form,
+        tags: commaList(form.tags),
+        keywords: commaList(form.keywords),
+      };
+      if (editing) return updateMediaAsset(companyId, editing.id, values);
+      if (!file) throw new Error("Selecione uma imagem, vídeo ou PDF.");
+      return createMediaAsset(companyId, values, file);
+    },
+    onSuccess: async () => {
+      setFormOpen(false); setEditing(null); setForm(EMPTY_MEDIA_FORM); setFile(null); setFormError("");
+      await invalidateAssets();
+    },
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const removeAsset = useMutation({
+    mutationFn: (asset: MediaAsset) => deleteMediaAsset(companyId, asset.id),
+    onSuccess: () => void invalidateAssets(),
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const openCreate = () => {
+    setEditing(null); setForm({ ...EMPTY_MEDIA_FORM, category: category === "" ? null : category });
+    setFile(null); setFormError(""); setFormOpen(true);
+  };
+  const openEdit = (asset: MediaAsset) => {
+    setEditing(asset); setForm(mediaForm(asset)); setFile(null); setFormError(""); setFormOpen(true);
+  };
+  const updateField = <K extends keyof MediaFormState>(field: K, value: MediaFormState[K]) =>
+    setForm((current) => ({ ...current, [field]: value }));
+
+  return <div className="page-stack media-library-page">
+    <PageTitle eyebrow="CONTEÚDO PARA O WHATSAPP" title="Mídias da IA" description="Cadastre fotos, vídeos, catálogos e tutoriais para a IA encontrar e enviar no momento certo." action={<button className="button button-primary" onClick={openCreate}><Plus size={16} /> Nova mídia</button>} />
+    {formError && !formOpen && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
+    <div className="media-layout">
+      <aside className="panel media-category-panel">
+        <div className="panel-heading"><div><h2>Categorias</h2><p>Organize produtos e serviços.</p></div><Badge>{categories.data?.length ?? 0}</Badge></div>
+        {categories.isPending ? <Loading /> : categories.isError ? <ErrorNotice error={categories.error} retry={() => void categories.refetch()} /> : <div className="media-category-list">
+          <button className={category === "" ? "media-category-active" : ""} onClick={() => { setCategory(""); setPage(1); }}><FolderTree size={16} /><span>Todas as mídias</span></button>
+          {categories.data.map((item) => <div className="media-category-row" key={item.id}><button className={category === item.id ? "media-category-active" : ""} onClick={() => { setCategory(item.id); setPage(1); }}><FolderTree size={15} /><span>{item.name}</span></button><button className="icon-button danger-icon" aria-label={`Excluir categoria ${item.name}`} onClick={() => { if (window.confirm(`Excluir a categoria “${item.name}”?`)) removeCategory.mutate(item); }}><X size={13} /></button></div>)}
+        </div>}
+        <form className="new-base-form" onSubmit={(event) => { event.preventDefault(); if (categoryName.trim()) createCategory.mutate(); }}><label htmlFor="new-media-category">Nova categoria</label><div className="inline-create"><input id="new-media-category" placeholder="Ex.: Produtos" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} /><button className="icon-button create-button" aria-label="Criar categoria" disabled={!categoryName.trim() || createCategory.isPending}><Plus size={17} /></button></div></form>
+      </aside>
+      <section className="panel media-content-panel">
+        <div className="media-toolbar"><label className="search-field"><Search size={16} /><input placeholder="Buscar nome, descrição, produto ou tag…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />{search && <button aria-label="Limpar busca" onClick={() => setSearch("")}><X size={14} /></button>}</label><select aria-label="Filtrar tipo" value={fileType} onChange={(event) => { setFileType(event.target.value); setPage(1); }}><option value="">Todos os tipos</option><option value="image">Imagens</option><option value="video">Vídeos</option><option value="document">Documentos</option></select></div>
+        {assets.isPending ? <Loading label="Carregando biblioteca…" /> : assets.isError ? <ErrorNotice error={assets.error} retry={() => void assets.refetch()} /> : assets.data.results.length ? <><div className="media-grid">{assets.data.results.map((asset) => <article className="media-card" key={asset.id}>
+          <div className="media-preview">{asset.file_type === "image" ? <img src={asset.download_url} alt={asset.name} loading="lazy" /> : asset.file_type === "video" ? <video src={asset.download_url} controls preload="metadata" /> : <a href={asset.download_url} target="_blank" rel="noreferrer"><FileText size={34} /><span>Abrir documento</span></a>}<span className={`media-status media-status-${asset.status}`}>{asset.status === "ready" ? "Pronto" : asset.status === "failed" ? "Falhou" : "Processando"}</span></div>
+          <div className="media-card-body"><div className="media-card-heading"><div><small>{asset.category_name || "Sem categoria"}</small><h3>{asset.name}</h3></div><span className="media-type-icon">{asset.file_type === "image" ? <ImageIcon size={15} /> : asset.file_type === "video" ? <Film size={15} /> : <FileText size={15} />}</span></div><p>{asset.description}</p>{asset.product_service && <span className="media-product">{asset.product_service}</span>}<div className="media-card-flags"><Badge tone={asset.is_active ? "green" : "neutral"}>{asset.is_active ? "Ativa" : "Inativa"}</Badge><Badge tone={asset.allow_ai_send ? "brand" : "neutral"}>{asset.allow_ai_send ? "IA pode enviar" : "Envio manual"}</Badge></div>{asset.error && <small className="document-error">{asset.error}</small>}<div className="media-card-actions"><button className="button button-secondary button-small" onClick={() => openEdit(asset)}>Editar</button><button className="icon-button danger-icon" aria-label={`Excluir ${asset.name}`} onClick={() => { if (window.confirm(`Excluir “${asset.name}”?`)) removeAsset.mutate(asset); }}><X size={15} /></button></div></div>
+        </article>)}</div><Pagination page={page} count={assets.data.count} onPage={setPage} /></> : <Empty icon={ImageIcon} title="Nenhuma mídia encontrada" text="Adicione imagens, vídeos ou PDFs para a IA usar no atendimento." action={<button className="button button-primary button-small" onClick={openCreate}><Plus size={15} /> Adicionar mídia</button>} />}
+      </section>
+    </div>
+    {formOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}><section className="modal-card media-modal" role="dialog" aria-modal="true" aria-labelledby="media-modal-title"><div className="modal-heading"><div><span className="eyebrow">BIBLIOTECA INTELIGENTE</span><h2 id="media-modal-title">{editing ? "Editar mídia" : "Adicionar mídia"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setFormOpen(false)}><X size={18} /></button></div>
+      {formError && <div className="inline-error" role="alert">{formError}</div>}
+      <form className="stack-form media-form" onSubmit={(event) => { event.preventDefault(); setFormError(""); saveAsset.mutate(); }}>
+        {!editing && <label className="media-file-picker"><UploadCloud size={22} /><strong>{file?.name || "Escolher imagem, vídeo ou PDF"}</strong><small>JPEG, PNG, WebP, GIF, MP4, 3GPP ou PDF · até 16 MB</small><input required type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/3gpp,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>}
+        <div className="settings-fields"><label>Nome<input required maxLength={200} value={form.name} onChange={(event) => updateField("name", event.target.value)} placeholder="Ex.: Tutorial da chopeira 50L" /></label><label>Categoria<select value={form.category ?? ""} onChange={(event) => updateField("category", event.target.value ? Number(event.target.value) : null)}><option value="">Sem categoria</option>{categories.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
+        <label>Descrição para a IA<textarea required rows={3} maxLength={4000} value={form.description} onChange={(event) => updateField("description", event.target.value)} placeholder="Explique quando este arquivo é útil e o que ele mostra." /></label>
+        <label>Produto ou serviço associado<input maxLength={200} value={form.product_service} onChange={(event) => updateField("product_service", event.target.value)} placeholder="Ex.: Carrinho Completo" /></label>
+        <div className="settings-fields"><label>Tags<input value={form.tags} onChange={(event) => updateField("tags", event.target.value)} placeholder="foto, chopeira, produto" /></label><label>Palavras-chave<input value={form.keywords} onChange={(event) => updateField("keywords", event.target.value)} placeholder="catálogo, 50 litros" /></label></div>
+        <label>Texto para pesquisa semântica<textarea required rows={3} maxLength={8000} value={form.search_text} onChange={(event) => updateField("search_text", event.target.value)} placeholder="Descreva com detalhes o conteúdo para facilitar a busca da IA." /></label>
+        <div className="media-switches"><label><input type="checkbox" checked={form.is_active} onChange={(event) => updateField("is_active", event.target.checked)} /><span><strong>Mídia ativa</strong><small>Aparece nas buscas da biblioteca.</small></span></label><label><input type="checkbox" checked={form.allow_ai_send} onChange={(event) => updateField("allow_ai_send", event.target.checked)} /><span><strong>Permitir envio automático</strong><small>A IA poderá selecionar e enviar este arquivo.</small></span></label></div>
+        <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setFormOpen(false)}>Cancelar</button><button className="button button-primary" disabled={saveAsset.isPending}>{saveAsset.isPending ? <><LoaderCircle className="spin" size={16} /> Salvando…</> : editing ? "Salvar alterações" : "Adicionar mídia"}</button></div>
+      </form>
+    </section></div>}
+  </div>;
+}
+
 function DocumentRow({ doc, disabled, onDelete, onReprocess }: { doc: KnowledgeDocument; disabled: boolean; onDelete: () => void; onReprocess: () => void }) {
   const tone = doc.status === "ready" ? "green" : doc.status === "failed" ? "red" : doc.status === "processing" ? "brand" : "neutral";
   return <div className="document-row"><span className="document-name"><span className="document-file-icon"><FileText size={16} /></span><span><strong>{doc.title}</strong><small>{doc.file_name}</small>{doc.error && <small className="document-error">{doc.error}</small>}</span></span><span><Badge tone={tone}>{doc.status === "processing" && <LoaderCircle className="spin" size={11} />}{documentLabel[doc.status]}</Badge></span><span className="document-date">{formatDate(doc.created_at)}</span><span className="document-row-actions">{doc.status === "failed" && <button className="icon-button" aria-label={`Reprocessar ${doc.title}`} disabled={disabled} onClick={onReprocess}><RefreshCw size={15} /></button>}<button className="icon-button danger-icon" aria-label={`Excluir ${doc.title}`} disabled={disabled} onClick={onDelete}><X size={15} /></button></span></div>;
@@ -1086,6 +1254,7 @@ function ProtectedApp({ session }: { session: Session }) {
     <Route path="/inbox" element={<InboxPage />} />
     <Route path="/contacts" element={<ContactsPage />} />
     <Route path="/knowledge" element={roleCanManage(company.role) ? <KnowledgePage /> : <AccessDenied />} />
+    <Route path="/media" element={roleCanManage(company.role) ? <MediaLibraryPage /> : <AccessDenied />} />
     <Route path="/numbers" element={<NumbersPage />} />
     <Route path="/team" element={roleCanManage(company.role) ? <TeamPage /> : <AccessDenied />} />
     <Route path="/settings" element={roleCanManage(company.role) ? <SettingsPage /> : <AccessDenied />} />
