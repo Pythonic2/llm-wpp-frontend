@@ -447,7 +447,12 @@ async function mapWithConcurrency<T, R>(
 }
 
 export async function getMediaAssetBlob(downloadUrl: string): Promise<Blob> {
-  const { data } = await http.get<Blob>(downloadUrl, { responseType: "blob", timeout: 60_000 });
+  const resolvedUrl = /^https?:\/\//i.test(downloadUrl)
+    ? downloadUrl
+    : downloadUrl.startsWith("/")
+      ? new URL(downloadUrl, `${apiOrigin}/`).toString()
+      : downloadUrl;
+  const { data } = await http.get<Blob>(resolvedUrl, { responseType: "blob", timeout: 60_000 });
   return data;
 }
 

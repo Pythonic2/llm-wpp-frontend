@@ -113,3 +113,21 @@ describe("session API contract", () => {
     }
   });
 });
+
+describe("media API contract", () => {
+  afterEach(() => {
+    api.http.defaults.adapter = originalAdapter;
+  });
+
+  it("resolves root-relative media URLs against the API origin", async () => {
+    let requestedUrl = "";
+    const mediaBlob = new Blob(["image"], { type: "image/png" });
+    api.http.defaults.adapter = async (config) => {
+      requestedUrl = config.url ?? "";
+      return { config, data: mediaBlob, status: 200, statusText: "OK", headers: {} };
+    };
+
+    await expect(api.getMediaAssetBlob("/media/company/photo.png")).resolves.toBe(mediaBlob);
+    expect(requestedUrl).toBe(`${api.apiOrigin}/media/company/photo.png`);
+  });
+});
