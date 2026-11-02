@@ -77,6 +77,12 @@ export interface Message {
   direction: "in" | "out";
   message_type: string;
   text: string;
+  source_media_id?: string;
+  attachment_url?: string;
+  attachment_name?: string;
+  attachment_mime_type?: string;
+  attachment_size?: number;
+  attachment_error?: string;
   status: "received" | "pending" | "sent" | "delivered" | "read" | "failed";
   ai_status: "na" | "queued" | "processing" | "completed" | "skipped" | "failed";
   response_to: number | null;

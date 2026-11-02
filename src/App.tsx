@@ -21,6 +21,7 @@ import {
   ChevronDown,
   CircleHelp,
   Clock3,
+  Download,
   FileText,
   Film,
   Flame,
@@ -67,6 +68,7 @@ import {
   deleteMediaAsset,
   deleteMediaCategory,
   deleteNumber,
+  downloadMessageAttachment,
   errorMessage,
   getContact,
   getCompany,
@@ -657,7 +659,20 @@ function InboxPage() {
 function MessageBubble({ message }: { message: Message }) {
   const outgoing = message.direction === "out";
   const aiLabel: Record<Message["ai_status"], string> = { na: "", queued: "IA na fila", processing: "IA processando", completed: "Respondida pela IA", skipped: "IA ignorada", failed: "Falha na IA" };
-  return <div className={`message-row ${outgoing ? "message-outgoing" : ""}`}><div className={`message-bubble ${outgoing ? "bubble-outgoing" : "bubble-incoming"}`}><p>{message.text || <em>Mensagem {message.message_type} não textual</em>}</p><span className="message-meta">{formatTime(message.created_at)}<MessageStatus status={message.status} />{!outgoing && aiLabel[message.ai_status] && <small className="ai-message-label">{aiLabel[message.ai_status]}</small>}</span></div></div>;
+  return <div className={`message-row ${outgoing ? "message-outgoing" : ""}`}><div className={`message-bubble ${outgoing ? "bubble-outgoing" : "bubble-incoming"}`}><p>{message.text || <em>Mensagem {message.message_type} não textual</em>}</p>{message.source_media_id && <MessageAttachment message={message} />}<span className="message-meta">{formatTime(message.created_at)}<MessageStatus status={message.status} />{!outgoing && aiLabel[message.ai_status] && <small className="ai-message-label">{aiLabel[message.ai_status]}</small>}</span></div></div>;
+}
+
+function MessageAttachment({ message }: { message: Message }) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+  const attachmentFailed = !!message.attachment_error && message.attachment_error !== "processing";
+  if (!message.attachment_url) return <span className={`message-attachment-pending ${attachmentFailed ? "message-attachment-error" : ""}`}>{attachmentFailed ? "Não foi possível salvar o anexo" : "Preparando anexo para download…"}</span>;
+  const attachmentUrl = message.attachment_url;
+  const attachmentName = message.attachment_name || "anexo";
+  return <button className="message-attachment" disabled={downloading} onClick={() => {
+    setDownloading(true); setError("");
+    void downloadMessageAttachment(attachmentUrl, attachmentName).catch((downloadError: unknown) => setError(errorMessage(downloadError))).finally(() => setDownloading(false));
+  }}><span className="message-attachment-icon">{downloading ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}</span><span><strong>{message.attachment_name || "Anexo"}</strong><small>{message.attachment_size ? `${Math.max(1, Math.round(message.attachment_size / 1024))} KB · ` : ""}{error || "Baixar arquivo"}</small></span></button>;
 }
 
 function MessageStatus({ status }: { status: Message["status"] }) {
