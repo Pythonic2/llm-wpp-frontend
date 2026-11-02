@@ -74,6 +74,7 @@ import {
   getDashboard,
   getNumber,
   getKnowledgeBase,
+  getMediaAssetBlob,
   getSession,
   isSessionExpiredError,
   listContacts,
@@ -894,7 +895,7 @@ const EMPTY_MEDIA_FORM: MediaFormState = {
   product_service: "",
   search_text: "",
   is_active: true,
-  allow_ai_send: false,
+  allow_ai_send: true,
 };
 
 function commaList(value: string) {
@@ -979,6 +980,21 @@ function MediaLibraryPage() {
     onSuccess: () => void invalidateAssets(),
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
+  const reprocessAsset = useMutation({
+    mutationFn: (asset: MediaAsset) => updateMediaAsset(companyId, asset.id, {
+      name: asset.name,
+      description: asset.description,
+      category: asset.category,
+      tags: asset.tags,
+      keywords: asset.keywords,
+      product_service: asset.product_service,
+      search_text: asset.search_text,
+      is_active: asset.is_active,
+      allow_ai_send: asset.allow_ai_send,
+    }),
+    onSuccess: () => void invalidateAssets(),
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
   const openCreate = () => {
     setEditing(null); setForm({ ...EMPTY_MEDIA_FORM, category: category === "" ? null : category });
     setFiles([]); setFormError(""); setFormOpen(true);
@@ -1004,8 +1020,8 @@ function MediaLibraryPage() {
       <section className="panel media-content-panel">
         <div className="media-toolbar"><label className="search-field"><Search size={16} /><input placeholder="Buscar nome, descrição, produto ou tag…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />{search && <button aria-label="Limpar busca" onClick={() => setSearch("")}><X size={14} /></button>}</label><select aria-label="Filtrar tipo" value={fileType} onChange={(event) => { setFileType(event.target.value); setPage(1); }}><option value="">Todos os tipos</option><option value="image">Imagens</option><option value="video">Vídeos</option><option value="document">Documentos</option></select></div>
         {assets.isPending ? <Loading label="Carregando biblioteca…" /> : assets.isError ? <ErrorNotice error={assets.error} retry={() => void assets.refetch()} /> : assets.data.results.length ? <><div className="media-grid">{assets.data.results.map((asset) => <article className="media-card" key={asset.id}>
-          <div className="media-preview">{asset.file_type === "image" ? <img src={asset.download_url} alt={asset.name} loading="lazy" /> : asset.file_type === "video" ? <video src={asset.download_url} controls preload="metadata" /> : <a href={asset.download_url} target="_blank" rel="noreferrer"><FileText size={34} /><span>Abrir documento</span></a>}<span className={`media-status media-status-${asset.status}`}>{asset.status === "ready" ? "Pronto" : asset.status === "failed" ? "Falhou" : "Processando"}</span></div>
-          <div className="media-card-body"><div className="media-card-heading"><div><small>{asset.category_name || "Sem categoria"}</small><h3>{asset.name}</h3></div><span className="media-type-icon">{asset.file_type === "image" ? <ImageIcon size={15} /> : asset.file_type === "video" ? <Film size={15} /> : <FileText size={15} />}</span></div><p>{asset.description}</p>{asset.product_service && <span className="media-product">{asset.product_service}</span>}<div className="media-card-flags"><Badge tone={asset.is_active ? "green" : "neutral"}>{asset.is_active ? "Ativa" : "Inativa"}</Badge><Badge tone={asset.allow_ai_send ? "brand" : "neutral"}>{asset.allow_ai_send ? "IA pode enviar" : "Envio manual"}</Badge></div>{asset.error && <small className="document-error">{asset.error}</small>}<div className="media-card-actions"><button className="button button-secondary button-small" onClick={() => openEdit(asset)}>Editar</button><button className="icon-button danger-icon" aria-label={`Excluir ${asset.name}`} onClick={() => { if (window.confirm(`Excluir “${asset.name}”?`)) removeAsset.mutate(asset); }}><X size={15} /></button></div></div>
+          <div className="media-preview">{asset.file_type === "image" || asset.file_type === "video" ? <AuthenticatedMediaPreview asset={asset} /> : <a href={asset.download_url} target="_blank" rel="noreferrer"><FileText size={34} /><span>Abrir documento</span></a>}<span className={`media-status media-status-${asset.status}`}>{asset.status === "ready" ? "Pronto" : asset.status === "failed" ? "Falhou" : "Processando"}</span></div>
+          <div className="media-card-body"><div className="media-card-heading"><div><small>{asset.category_name || "Sem categoria"}</small><h3>{asset.name}</h3></div><span className="media-type-icon">{asset.file_type === "image" ? <ImageIcon size={15} /> : asset.file_type === "video" ? <Film size={15} /> : <FileText size={15} />}</span></div><p>{asset.description}</p>{asset.product_service && <span className="media-product">{asset.product_service}</span>}<div className="media-card-flags"><Badge tone={asset.is_active ? "green" : "neutral"}>{asset.is_active ? "Ativa" : "Inativa"}</Badge><Badge tone={asset.allow_ai_send ? "brand" : "neutral"}>{asset.allow_ai_send ? "IA pode enviar" : "Envio manual"}</Badge></div>{asset.error && <small className="document-error">{asset.error}</small>}<div className="media-card-actions">{asset.status !== "ready" && <button className="button button-secondary button-small" disabled={reprocessAsset.isPending} onClick={() => reprocessAsset.mutate(asset)}><RefreshCw size={13} /> Reprocessar</button>}<button className="button button-secondary button-small" onClick={() => openEdit(asset)}>Editar</button><button className="icon-button danger-icon" aria-label={`Excluir ${asset.name}`} onClick={() => { if (window.confirm(`Excluir “${asset.name}”?`)) removeAsset.mutate(asset); }}><X size={15} /></button></div></div>
         </article>)}</div><Pagination page={page} count={assets.data.count} onPage={setPage} /></> : <Empty icon={ImageIcon} title="Nenhuma mídia encontrada" text="Adicione imagens, vídeos ou PDFs para a IA usar no atendimento." action={<button className="button button-primary button-small" onClick={openCreate}><Plus size={15} /> Adicionar mídia</button>} />}
       </section>
     </div>
@@ -1029,6 +1045,31 @@ function MediaLibraryPage() {
 function DocumentRow({ doc, disabled, onDelete, onReprocess }: { doc: KnowledgeDocument; disabled: boolean; onDelete: () => void; onReprocess: () => void }) {
   const tone = doc.status === "ready" ? "green" : doc.status === "failed" ? "red" : doc.status === "processing" ? "brand" : "neutral";
   return <div className="document-row"><span className="document-name"><span className="document-file-icon"><FileText size={16} /></span><span><strong>{doc.title}</strong><small>{doc.file_name}</small>{doc.error && <small className="document-error">{doc.error}</small>}</span></span><span><Badge tone={tone}>{doc.status === "processing" && <LoaderCircle className="spin" size={11} />}{documentLabel[doc.status]}</Badge></span><span className="document-date">{formatDate(doc.created_at)}</span><span className="document-row-actions">{doc.status === "failed" && <button className="icon-button" aria-label={`Reprocessar ${doc.title}`} disabled={disabled} onClick={onReprocess}><RefreshCw size={15} /></button>}<button className="icon-button danger-icon" aria-label={`Excluir ${doc.title}`} disabled={disabled} onClick={onDelete}><X size={15} /></button></span></div>;
+}
+
+function AuthenticatedMediaPreview({ asset }: { asset: MediaAsset }) {
+  const [source, setSource] = useState("");
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let objectUrl = "";
+    let active = true;
+    setSource("");
+    setFailed(false);
+    void getMediaAssetBlob(asset.download_url).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSource(objectUrl);
+    }).catch(() => { if (active) setFailed(true); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [asset.download_url]);
+  if (failed) return <span className="media-preview-error"><ImageIcon size={24} />Preview indisponível</span>;
+  if (!source) return <LoaderCircle className="spin" size={22} />;
+  return asset.file_type === "image"
+    ? <img src={source} alt={asset.name} loading="lazy" />
+    : <video src={source} controls preload="metadata" />;
 }
 
 function NumbersPage() {

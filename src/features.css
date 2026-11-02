@@ -204,6 +204,16 @@
   font-weight: 600;
 }
 
+.media-preview-error {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  color: #8e96aa;
+  font-size: 9px;
+}
+
 .media-status {
   position: absolute;
   top: 8px;

@@ -98,6 +98,7 @@ export function errorMessage(error: unknown): string {
     if (error.response?.status === 403) return "Você não tem permissão para esta ação.";
     if (error.response?.status === 404) return "O recurso não foi encontrado ou não está disponível para esta empresa.";
     if (error.response?.status === 502) return "A mensagem não pôde ser enviada pelo WhatsApp. Verifique a integração e tente novamente.";
+    if (error.code === "ECONNABORTED") return "O servidor demorou demais para receber os arquivos. Verifique o backend e tente novamente.";
     if (error.response?.status === 0 || !error.response) return "Não foi possível conectar ao servidor. Verifique sua conexão.";
     return "Não foi possível concluir a solicitação. Tente novamente.";
   }
@@ -331,14 +332,8 @@ export async function uploadDocumentWithTitle(companyId: string, baseId: number,
 }
 
 export async function uploadDocuments(companyId: string, baseId: number, files: File[]) {
-  const body = new FormData();
-  files.forEach((file) => body.append("files", file));
-  body.set("titles", JSON.stringify(files.map((file) => file.name.replace(/\.[^.]+$/, ""))));
-  const { data } = await http.post<KnowledgeDocument[]>(
-    companyPath(companyId, `knowledge-bases/${baseId}/documents/`),
-    body,
-  );
-  return data;
+  return mapWithConcurrency(files, 3, (file) =>
+    uploadDocumentWithTitle(companyId, baseId, file.name.replace(/\.[^.]+$/, ""), file));
 }
 
 export async function deleteDocument(companyId: string, baseId: number, documentId: number) {
@@ -426,20 +421,33 @@ export async function createMediaAssets(
   values: MediaAssetInput,
   files: File[],
 ): Promise<MediaAsset[]> {
-  const body = new FormData();
-  body.set("description", values.description);
-  if (values.category !== null) body.set("category", String(values.category));
-  body.set("tags", JSON.stringify(values.tags));
-  body.set("keywords", JSON.stringify(values.keywords));
-  body.set("product_service", values.product_service);
-  body.set("search_text", values.search_text);
-  body.set("is_active", String(values.is_active));
-  body.set("allow_ai_send", String(values.allow_ai_send));
-  body.set("names", JSON.stringify(files.map((file) => (
-    files.length === 1 && values.name.trim() ? values.name.trim() : file.name.replace(/\.[^.]+$/, "")
-  ))));
-  files.forEach((file) => body.append("files", file));
-  const { data } = await http.post<MediaAsset[]>(companyPath(companyId, "media-assets/"), body);
+  return mapWithConcurrency(files, 3, (file) => createMediaAsset(companyId, {
+    ...values,
+    name: files.length === 1 && values.name.trim()
+      ? values.name.trim()
+      : file.name.replace(/\.[^.]+$/, ""),
+  }, file));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  action: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await action(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+export async function getMediaAssetBlob(downloadUrl: string): Promise<Blob> {
+  const { data } = await http.get<Blob>(downloadUrl, { responseType: "blob", timeout: 60_000 });
   return data;
 }
 
