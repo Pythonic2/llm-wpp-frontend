@@ -447,11 +447,12 @@ async function mapWithConcurrency<T, R>(
 }
 
 export async function getMediaAssetBlob(downloadUrl: string): Promise<Blob> {
-  const resolvedUrl = /^https?:\/\//i.test(downloadUrl)
-    ? downloadUrl
-    : downloadUrl.startsWith("/")
-      ? new URL(downloadUrl, `${apiOrigin}/`).toString()
-      : downloadUrl;
+  const parsedUrl = new URL(downloadUrl, `${apiOrigin}/`);
+  // Media URLs belong to this API. Always use its configured origin so an
+  // internal host emitted by a reverse-proxied backend never leaks to clients.
+  const resolvedUrl = downloadUrl.startsWith("/") || /^https?:\/\//i.test(downloadUrl)
+    ? new URL(`${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`, `${apiOrigin}/`).toString()
+    : downloadUrl;
   const { data } = await http.get<Blob>(resolvedUrl, { responseType: "blob", timeout: 60_000 });
   return data;
 }

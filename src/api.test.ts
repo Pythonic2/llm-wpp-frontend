@@ -130,4 +130,20 @@ describe("media API contract", () => {
     await expect(api.getMediaAssetBlob("/media/company/photo.png")).resolves.toBe(mediaBlob);
     expect(requestedUrl).toBe(`${api.apiOrigin}/media/company/photo.png`);
   });
+
+  it("replaces an internal backend origin with the configured API origin", async () => {
+    let requestedUrl = "";
+    api.http.defaults.adapter = async (config) => {
+      requestedUrl = config.url ?? "";
+      return { config, data: new Blob(["image"]), status: 200, statusText: "OK", headers: {} };
+    };
+
+    await api.getMediaAssetBlob(
+      "http://192.168.0.6/api/v1/companies/company-id/media-assets/asset-id/download/",
+    );
+
+    expect(requestedUrl).toBe(
+      `${api.apiOrigin}/api/v1/companies/company-id/media-assets/asset-id/download/`,
+    );
+  });
 });
