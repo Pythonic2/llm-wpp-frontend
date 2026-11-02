@@ -58,7 +58,7 @@ import {
   conversationAction,
   createContact,
   createKnowledgeBase,
-  createMediaAsset,
+  createMediaAssets,
   createMediaCategory,
   createNumber,
   deleteContact,
@@ -99,7 +99,7 @@ import {
   updateMediaAsset,
   updateMember,
   updateNumber,
-  uploadDocumentWithTitle,
+  uploadDocuments,
 } from "./api";
 import type {
   Company,
@@ -801,7 +801,6 @@ function KnowledgePage() {
   const [baseError, setBaseError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [documentTitle, setDocumentTitle] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const basesQuery = useQuery({ queryKey: queryKeys.bases(companyId), queryFn: () => listKnowledgeBases(companyId), enabled: !!companyId });
@@ -836,18 +835,16 @@ function KnowledgePage() {
     onError: (error: unknown) => setBaseError(errorMessage(error)),
   });
   const upload = useMutation({
-    mutationFn: ({ title, file }: { title: string; file: File }) =>
-      uploadDocumentWithTitle(companyId, selected?.id ?? 0, title, file),
+    mutationFn: (files: File[]) => uploadDocuments(companyId, selected?.id ?? 0, files),
     onSuccess: () => { setUploadError(""); void queryClient.invalidateQueries({ queryKey: queryKeys.documents(companyId, selected?.id ?? 0) }); },
     onError: (error: unknown) => setUploadError(errorMessage(error)),
   });
   const handleFiles = (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file || !selected) return;
-    if (!isAllowedUpload(file)) { setUploadError("Formato não aceito. Envie um arquivo PDF, TXT ou CSV."); return; }
-    if (!documentTitle.trim()) { setUploadError("Informe um título para o documento."); return; }
+    const selectedFiles = Array.from(files ?? []);
+    if (!selectedFiles.length || !selected) return;
+    if (selectedFiles.some((file) => !isAllowedUpload(file))) { setUploadError("Um ou mais arquivos têm formato inválido. Envie apenas PDF, TXT ou CSV."); return; }
     setUploadError("");
-    upload.mutate({ title: documentTitle.trim(), file });
+    upload.mutate(selectedFiles);
   };
   const fileAction = useMutation({
     mutationFn: async ({ baseId, docId, action }: { baseId: number; docId: number; action: "delete" | "reprocess" }) => {
@@ -867,10 +864,9 @@ function KnowledgePage() {
       </aside>
       {selected ? <section className="panel documents-panel"><div className="panel-heading document-heading"><div><span className="eyebrow">DOCUMENTOS DA BASE</span><form className="base-rename-form" onSubmit={(event) => { event.preventDefault(); if (editBaseName.trim() && editBaseName.trim() !== selected.name) modify.mutate({ base: selected, values: { name: editBaseName.trim() } }); }}><input aria-label="Nome da base" value={editBaseName} maxLength={120} onChange={(event) => setEditBaseName(event.target.value)} /><button className="button button-secondary button-small" disabled={modify.isPending || !editBaseName.trim() || editBaseName.trim() === selected.name}>Salvar nome</button></form><p>Os arquivos são processados em segundo plano para uso pela IA.</p></div><div className="document-actions"><button className="button button-secondary button-small" disabled={modify.isPending} onClick={() => modify.mutate({ base: selected, values: { is_active: !selected.is_active } })}>{selected.is_active ? "Desativar base" : "Ativar base"}</button><button className="icon-button danger-icon" aria-label="Excluir base" disabled={removeBase.isPending} onClick={() => { if (window.confirm(`Excluir a base “${selected.name}” e seus documentos?`)) removeBase.mutate(selected); }}><X size={16} /></button></div></div>
         {baseDetail.isError && <ErrorNotice error={baseDetail.error} retry={() => void baseDetail.refetch()} />}
-        <label className="document-title-field">Título do documento<input value={documentTitle} maxLength={200} onChange={(event) => setDocumentTitle(event.target.value)} placeholder="Ex.: Política de atendimento" /></label>
-        <div className={`upload-zone ${dragging ? "upload-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); handleFiles(event.dataTransfer.files); }}><span className="upload-icon"><FileText size={20} /></span><strong>Arraste um arquivo para cá</strong><span>ou <button type="button" className="upload-browse" onClick={() => fileRef.current?.click()}>escolha no computador</button></span><small>PDF, TXT ou CSV · processamento seguro com a sua empresa</small><input ref={fileRef} className="visually-hidden" type="file" accept=".pdf,.txt,.csv,application/pdf,text/plain,text/csv" onChange={(event) => { handleFiles(event.target.files); event.currentTarget.value = ""; }} /></div>
+        <div className={`upload-zone ${dragging ? "upload-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); handleFiles(event.dataTransfer.files); }}><span className="upload-icon"><FileText size={20} /></span><strong>Arraste vários documentos para cá</strong><span>ou <button type="button" className="upload-browse" onClick={() => fileRef.current?.click()}>escolha no computador</button></span><small>PDF, TXT ou CSV · cada arquivo será criado com o próprio nome</small><input ref={fileRef} className="visually-hidden" type="file" multiple accept=".pdf,.txt,.csv,application/pdf,text/plain,text/csv" onChange={(event) => { handleFiles(event.target.files); event.currentTarget.value = ""; }} /></div>
         {uploadError && <div className="inline-error" role="alert">{uploadError}<button onClick={() => setUploadError("")} aria-label="Fechar"><X size={14} /></button></div>}
-        {upload.isPending && <div className="upload-progress"><LoaderCircle className="spin" size={16} /> Enviando arquivo…</div>}
+        {upload.isPending && <div className="upload-progress"><LoaderCircle className="spin" size={16} /> Enviando documentos…</div>}
         {docsQuery.isPending ? <Loading /> : docsQuery.isError ? <ErrorNotice error={docsQuery.error} retry={() => void docsQuery.refetch()} /> : docsQuery.data.results.length ? <div className="document-list"><div className="document-list-heading"><span>ARQUIVO</span><span>STATUS</span><span>ADICIONADO</span><span /></div>{docsQuery.data.results.map((doc) => <DocumentRow key={doc.id} doc={doc} disabled={fileAction.isPending} onDelete={() => { if (window.confirm(`Excluir “${doc.title}”?`)) fileAction.mutate({ baseId: selected.id, docId: doc.id, action: "delete" }); }} onReprocess={() => fileAction.mutate({ baseId: selected.id, docId: doc.id, action: "reprocess" })} />)}</div> : <Empty icon={FileText} title="Nenhum documento ainda" text="Adicione arquivos para que a IA possa consultar as informações da sua empresa." />}
       </section> : <section className="panel documents-panel no-base-panel"><Empty icon={BookOpen} title="Crie sua primeira base" text="As bases de conhecimento guardam os documentos usados pela IA para responder às conversas." /></section>}
     </div>}
@@ -931,7 +927,7 @@ function MediaLibraryPage() {
   const [editing, setEditing] = useState<MediaAsset | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<MediaFormState>(EMPTY_MEDIA_FORM);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [formError, setFormError] = useState("");
   const filters: Record<string, string | number> = { page };
   if (search.trim()) filters.q = search.trim();
@@ -961,7 +957,7 @@ function MediaLibraryPage() {
     onSuccess: async (_, item) => { if (category === item.id) setCategory(""); await invalidateCategories(); },
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
-  const saveAsset = useMutation({
+  const saveAsset = useMutation<MediaAsset | MediaAsset[]>({
     mutationFn: () => {
       const values = {
         ...form,
@@ -969,11 +965,11 @@ function MediaLibraryPage() {
         keywords: commaList(form.keywords),
       };
       if (editing) return updateMediaAsset(companyId, editing.id, values);
-      if (!file) throw new Error("Selecione uma imagem, vídeo ou PDF.");
-      return createMediaAsset(companyId, values, file);
+      if (!files.length) throw new Error("Selecione uma ou mais imagens, vídeos ou PDFs.");
+      return createMediaAssets(companyId, values, files);
     },
     onSuccess: async () => {
-      setFormOpen(false); setEditing(null); setForm(EMPTY_MEDIA_FORM); setFile(null); setFormError("");
+      setFormOpen(false); setEditing(null); setForm(EMPTY_MEDIA_FORM); setFiles([]); setFormError("");
       await invalidateAssets();
     },
     onError: (error: unknown) => setFormError(errorMessage(error)),
@@ -985,10 +981,10 @@ function MediaLibraryPage() {
   });
   const openCreate = () => {
     setEditing(null); setForm({ ...EMPTY_MEDIA_FORM, category: category === "" ? null : category });
-    setFile(null); setFormError(""); setFormOpen(true);
+    setFiles([]); setFormError(""); setFormOpen(true);
   };
   const openEdit = (asset: MediaAsset) => {
-    setEditing(asset); setForm(mediaForm(asset)); setFile(null); setFormError(""); setFormOpen(true);
+    setEditing(asset); setForm(mediaForm(asset)); setFiles([]); setFormError(""); setFormOpen(true);
   };
   const updateField = <K extends keyof MediaFormState>(field: K, value: MediaFormState[K]) =>
     setForm((current) => ({ ...current, [field]: value }));
@@ -1016,14 +1012,15 @@ function MediaLibraryPage() {
     {formOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}><section className="modal-card media-modal" role="dialog" aria-modal="true" aria-labelledby="media-modal-title"><div className="modal-heading"><div><span className="eyebrow">BIBLIOTECA INTELIGENTE</span><h2 id="media-modal-title">{editing ? "Editar mídia" : "Adicionar mídia"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setFormOpen(false)}><X size={18} /></button></div>
       {formError && <div className="inline-error" role="alert">{formError}</div>}
       <form className="stack-form media-form" onSubmit={(event) => { event.preventDefault(); setFormError(""); saveAsset.mutate(); }}>
-        {!editing && <label className="media-file-picker"><UploadCloud size={22} /><strong>{file?.name || "Escolher imagem, vídeo ou PDF"}</strong><small>JPEG, PNG, WebP, GIF, MP4, 3GPP ou PDF · até 16 MB</small><input required type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/3gpp,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>}
-        <div className="settings-fields"><label>Nome<input required maxLength={200} value={form.name} onChange={(event) => updateField("name", event.target.value)} placeholder="Nome da mídia" /></label><label>Categoria<span className="media-select"><select value={form.category ?? ""} onChange={(event) => updateField("category", event.target.value ? Number(event.target.value) : null)}><option value="">Sem categoria</option>{categories.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown aria-hidden="true" size={16} /></span></label></div>
+        {!editing && <><label className="media-file-picker"><UploadCloud size={22} /><strong>{files.length ? `${files.length} arquivo${files.length > 1 ? "s" : ""} selecionado${files.length > 1 ? "s" : ""}` : "Escolher imagens, vídeos ou PDFs"}</strong><small>Seleção múltipla · JPEG, PNG, WebP, GIF, MP4, 3GPP ou PDF · até 16 MB cada</small><input required type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/3gpp,application/pdf" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /></label>{files.length > 0 && <div className="media-selected-files">{files.map((selectedFile, index) => <span key={`${selectedFile.name}-${selectedFile.lastModified}`}><FileText size={13} /><span>{selectedFile.name}</span><button type="button" aria-label={`Remover ${selectedFile.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X size={12} /></button></span>)}</div>}</>}
+        <div className="settings-fields">{(editing || files.length <= 1) && <label>Nome<input required={!!editing} maxLength={200} value={form.name} onChange={(event) => updateField("name", event.target.value)} placeholder={files.length === 1 ? "Opcional — usa o nome do arquivo" : "Nome da mídia"} /></label>}<label className={files.length > 1 && !editing ? "media-category-wide" : ""}>Categoria<span className="media-select"><select value={form.category ?? ""} onChange={(event) => updateField("category", event.target.value ? Number(event.target.value) : null)}><option value="">Sem categoria</option>{categories.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown aria-hidden="true" size={16} /></span></label></div>
+        {!editing && files.length > 1 && <p className="media-batch-note">Cada mídia receberá o nome do próprio arquivo. Os campos abaixo serão aplicados a todo o lote.</p>}
         <label>Descrição para a IA<textarea required rows={3} maxLength={4000} value={form.description} onChange={(event) => updateField("description", event.target.value)} placeholder="Explique quando este arquivo é útil e o que ele mostra." /></label>
         <label>Produto ou serviço associado<input maxLength={200} value={form.product_service} onChange={(event) => updateField("product_service", event.target.value)} placeholder="Nome do produto ou serviço (opcional)" /></label>
-        <div className="settings-fields"><label>Tags<input value={form.tags} onChange={(event) => updateField("tags", event.target.value)} placeholder="Separe as tags por vírgulas" /></label><label>Palavras-chave<input value={form.keywords} onChange={(event) => updateField("keywords", event.target.value)} placeholder="Separe as palavras por vírgulas" /></label></div>
+        <div className="settings-fields"><label>Tags (etiquetas)<small className="field-help">Rótulos para organizar e filtrar. Ex.: chopeira, catálogo, instalação.</small><input value={form.tags} onChange={(event) => updateField("tags", event.target.value)} placeholder="Separe as tags por vírgulas" /></label><label>Palavras-chave<small className="field-help">Termos e sinônimos que ajudam a IA a encontrar esta mídia.</small><input value={form.keywords} onChange={(event) => updateField("keywords", event.target.value)} placeholder="Separe as palavras por vírgulas" /></label></div>
         <label>Texto para pesquisa semântica<textarea required rows={3} maxLength={8000} value={form.search_text} onChange={(event) => updateField("search_text", event.target.value)} placeholder="Descreva com detalhes o conteúdo para facilitar a busca da IA." /></label>
-        <div className="media-switches"><label><input type="checkbox" checked={form.is_active} onChange={(event) => updateField("is_active", event.target.checked)} /><span><strong>Mídia ativa</strong><small>Aparece nas buscas da biblioteca.</small></span></label><label><input type="checkbox" checked={form.allow_ai_send} onChange={(event) => updateField("allow_ai_send", event.target.checked)} /><span><strong>Permitir envio automático</strong><small>A IA poderá selecionar e enviar este arquivo.</small></span></label></div>
-        <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setFormOpen(false)}>Cancelar</button><button className="button button-primary" disabled={saveAsset.isPending}>{saveAsset.isPending ? <><LoaderCircle className="spin" size={16} /> Salvando…</> : editing ? "Salvar alterações" : "Adicionar mídia"}</button></div>
+        <div className="media-switches"><label className="media-switch"><input type="checkbox" checked={form.is_active} onChange={(event) => updateField("is_active", event.target.checked)} /><i aria-hidden="true" /><span><strong>Mídia ativa</strong><small>Aparece nas buscas da biblioteca.</small></span></label><label className="media-switch"><input type="checkbox" checked={form.allow_ai_send} onChange={(event) => updateField("allow_ai_send", event.target.checked)} /><i aria-hidden="true" /><span><strong>Permitir envio automático</strong><small>A IA poderá selecionar e enviar este arquivo.</small></span></label></div>
+        <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setFormOpen(false)}>Cancelar</button><button className="button button-primary" disabled={saveAsset.isPending || (!editing && !files.length)}>{saveAsset.isPending ? <><LoaderCircle className="spin" size={16} /> Salvando…</> : editing ? "Salvar alterações" : files.length > 1 ? `Adicionar ${files.length} mídias` : "Adicionar mídia"}</button></div>
       </form>
     </section></div>}
   </div>;

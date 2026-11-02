@@ -330,6 +330,17 @@ export async function uploadDocumentWithTitle(companyId: string, baseId: number,
   return data;
 }
 
+export async function uploadDocuments(companyId: string, baseId: number, files: File[]) {
+  const body = new FormData();
+  files.forEach((file) => body.append("files", file));
+  body.set("titles", JSON.stringify(files.map((file) => file.name.replace(/\.[^.]+$/, ""))));
+  const { data } = await http.post<KnowledgeDocument[]>(
+    companyPath(companyId, `knowledge-bases/${baseId}/documents/`),
+    body,
+  );
+  return data;
+}
+
 export async function deleteDocument(companyId: string, baseId: number, documentId: number) {
   await http.delete(companyPath(companyId, `knowledge-bases/${baseId}/documents/${documentId}/`));
 }
@@ -407,6 +418,28 @@ export async function createMediaAsset(
   body.set("allow_ai_send", String(values.allow_ai_send));
   body.set("file", file);
   const { data } = await http.post<MediaAsset>(companyPath(companyId, "media-assets/"), body);
+  return data;
+}
+
+export async function createMediaAssets(
+  companyId: string,
+  values: MediaAssetInput,
+  files: File[],
+): Promise<MediaAsset[]> {
+  const body = new FormData();
+  body.set("description", values.description);
+  if (values.category !== null) body.set("category", String(values.category));
+  body.set("tags", JSON.stringify(values.tags));
+  body.set("keywords", JSON.stringify(values.keywords));
+  body.set("product_service", values.product_service);
+  body.set("search_text", values.search_text);
+  body.set("is_active", String(values.is_active));
+  body.set("allow_ai_send", String(values.allow_ai_send));
+  body.set("names", JSON.stringify(files.map((file) => (
+    files.length === 1 && values.name.trim() ? values.name.trim() : file.name.replace(/\.[^.]+$/, "")
+  ))));
+  files.forEach((file) => body.append("files", file));
+  const { data } = await http.post<MediaAsset[]>(companyPath(companyId, "media-assets/"), body);
   return data;
 }
 
