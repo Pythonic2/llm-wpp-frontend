@@ -45,6 +45,7 @@ import {
   Smartphone,
   Sparkles,
   Target,
+  ShoppingCart,
   UploadCloud,
   Users,
   X,
@@ -103,6 +104,10 @@ import {
   updateMember,
   updateNumber,
   uploadDocuments,
+  getEmbeddedSignupConfig,
+  completeEmbeddedSignup,
+  listOrders,
+  decideOrder,
 } from "./api";
 import type {
   Company,
@@ -120,6 +125,7 @@ import type {
   Session,
   WhatsAppNumber,
   WhatsAppNumberInput,
+  Order,
 } from "./types";
 import { formatDate, formatPhone, formatTime } from "./format";
 
@@ -356,6 +362,7 @@ const navItems = [
   { to: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
   { to: "/inbox", label: "Caixa de entrada", icon: MessageCircle },
   { to: "/contacts", label: "Contatos", icon: Users },
+  { to: "/orders", label: "Pedidos", icon: ShoppingCart },
   { to: "/knowledge", label: "Conhecimento", icon: BookOpen, admin: true },
   { to: "/media", label: "Mídias da IA", icon: ImageIcon, admin: true },
   { to: "/numbers", label: "WhatsApp", icon: Smartphone },
@@ -1087,6 +1094,70 @@ function AuthenticatedMediaPreview({ asset }: { asset: MediaAsset }) {
     : <video src={source} controls preload="metadata" />;
 }
 
+declare global {
+  interface Window {
+    FB?: {
+      init: (options: Record<string, unknown>) => void;
+      login: (callback: (response: { authResponse?: { code?: string } }) => void, options: Record<string, unknown>) => void;
+    };
+  }
+}
+
+async function loadFacebookSdk(appId: string, apiVersion: string) {
+  if (!window.FB) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.id = "facebook-jssdk";
+      script.src = "https://connect.facebook.net/pt_BR/sdk.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Não foi possível carregar a autenticação da Meta."));
+      document.body.appendChild(script);
+    });
+  }
+  window.FB?.init({ appId, autoLogAppEvents: true, xfbml: false, version: apiVersion });
+}
+
+async function launchCoexistence(config: Awaited<ReturnType<typeof getEmbeddedSignupConfig>>) {
+  await loadFacebookSdk(config.app_id, config.api_version);
+  return new Promise<{ code: string; waba_id: string; phone_number_id: string; event: string }>((resolve, reject) => {
+    let session: { waba_id: string; phone_number_id: string; event: string } | null = null;
+    let code = "";
+    const finish = () => {
+      if (session && code) { window.removeEventListener("message", listener); resolve({ code, ...session }); }
+    };
+    const listener = (event: MessageEvent) => {
+      if (!/^https:\/\/([a-z0-9-]+\.)*facebook\.com$/i.test(event.origin)) return;
+      try {
+        const payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
+        if (payload.event === "CANCEL" || payload.event === "ERROR") {
+          window.removeEventListener("message", listener);
+          reject(new Error(payload.data?.error_message || "A conexão foi cancelada na Meta."));
+        } else if (payload.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") {
+          if (!payload.data?.waba_id || !payload.data?.phone_number_id) {
+            reject(new Error("A Meta não retornou os identificadores do número."));
+            return;
+          }
+          session = { event: payload.event, waba_id: payload.data.waba_id, phone_number_id: payload.data.phone_number_id };
+          finish();
+        }
+      } catch { /* Mensagem sem relação com o Embedded Signup. */ }
+    };
+    window.addEventListener("message", listener);
+    window.FB?.login((response) => {
+      code = response.authResponse?.code ?? "";
+      if (!code) { window.removeEventListener("message", listener); reject(new Error("A Meta não autorizou a conexão.")); return; }
+      finish();
+    }, {
+      config_id: config.config_id,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: config.feature_type, sessionInfoVersion: config.session_info_version },
+    });
+  });
+}
+
 function NumbersPage() {
   const { company } = useApp();
   const companyId = company?.id ?? "";
@@ -1122,6 +1193,13 @@ function NumbersPage() {
   const remove = useMutation({
     mutationFn: (id: number) => deleteNumber(companyId, id),
     onSuccess: () => void invalidate(),
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const connect = useMutation({
+    mutationFn: async () => completeEmbeddedSignup(
+      companyId, await launchCoexistence(await getEmbeddedSignupConfig(companyId)),
+    ),
+    onSuccess: async () => { setFormError(""); await invalidate(); },
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
   useEffect(() => {
@@ -1160,8 +1238,8 @@ function NumbersPage() {
     if (createOpen) create.mutate(cleanValues);
     else if (editingId !== null) update.mutate({ id: editingId, input: cleanValues });
   };
-  return <div className="page-stack"><PageTitle eyebrow="CANAIS DE ATENDIMENTO" title="Números do WhatsApp" description={canManage ? "Cadastre e gerencie números já configurados na Meta." : "Consulte os números cadastrados para esta empresa."} action={canManage && <button className="button button-primary" onClick={openCreate}><Plus size={16} /> Cadastrar número</button>} />
-    <div className="settings-note"><CircleHelp size={16} /> O número e os IDs precisam existir previamente na Meta. O Gest Tech não cria números nem inicia conexões com a Meta.</div>
+  return <div className="page-stack"><PageTitle eyebrow="CANAIS DE ATENDIMENTO" title="Números do WhatsApp" description={canManage ? "Conecte seu número atual sem abandonar o WhatsApp Business no celular." : "Consulte os números cadastrados para esta empresa."} action={canManage && <><button className="button button-primary" disabled={connect.isPending} onClick={() => connect.mutate()}><Smartphone size={16} /> {connect.isPending ? "Conectando…" : "Conectar WhatsApp"}</button><button className="button button-secondary" onClick={openCreate}><Plus size={16} /> Cadastro manual</button></>} />
+    <div className="settings-note"><CircleHelp size={16} /> A conexão oficial usa coexistência. Se a Meta considerar o número inelegível, o Gest Tech interrompe o fluxo sem migrar ou excluir a conta existente.</div>
     {formError && !createOpen && editingId === null && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     {query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data.results.length ? <>
       <div className="number-grid">{query.data.results.map((number) => <article className="panel number-card" key={number.id}><div className="number-card-head"><span className="number-icon"><Smartphone size={20} /></span><span className="number-statuses"><Badge tone={number.is_active ? "green" : "neutral"}>{number.is_active ? "Ativo" : "Inativo"}</Badge><Badge tone={number.ai_enabled ? "brand" : "neutral"}>{number.ai_enabled ? "IA ativa" : "IA desativada"}</Badge></span></div><span className="eyebrow">NÚMERO CADASTRADO</span><h2>{number.display_phone_number}</h2><p>ID do número · {number.phone_number_id}</p><p>Conta empresarial · {number.business_account_id || "Não informada"}</p>{canManage && <><div className="number-actions"><button className="button button-secondary button-small" onClick={() => openEdit(number)}>Detalhes e editar</button><button className="icon-button danger-icon" aria-label={`Excluir ${number.display_phone_number}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Excluir o número ${number.display_phone_number}?`)) remove.mutate(number.id); }}><X size={15} /></button></div><div className="number-toggles"><Toggle label="Número ativo" description="Recebe mensagens pelo webhook." disabled={update.isPending} checked={number.is_active} onChange={(active) => update.mutate({ id: number.id, input: { is_active: active, ...(!active ? { ai_enabled: false } : {}) } })} /><Toggle label="Respostas da IA" description="Permite respostas automáticas com Gemini." disabled={update.isPending || !number.is_active} checked={number.ai_enabled} onChange={(enabled) => update.mutate({ id: number.id, input: { ai_enabled: enabled } })} /></div></>}</article>)}</div>
@@ -1218,6 +1296,44 @@ function TeamPage() {
     {formError && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     <section className="panel team-invite"><span className="invite-icon"><Users size={19} /></span><div className="invite-copy"><strong>Adicionar membro</strong><small>Use o usuário ou e-mail de uma conta existente.</small></div><form className="invite-form" onSubmit={(event) => { event.preventDefault(); if (identifier.trim()) add.mutate(); }}><input aria-label="Usuário ou e-mail existente" placeholder="Usuário ou e-mail" value={identifier} onChange={(event) => setIdentifier(event.target.value)} /><select aria-label="Papel do novo membro" value={role} onChange={(event) => setRole(event.target.value as "admin" | "agent")}><option value="agent">Atendente</option><option value="admin">Administrador</option></select><button className="button button-primary" disabled={!identifier.trim() || add.isPending}><Plus size={16} /> {add.isPending ? "Adicionando…" : "Adicionar"}</button></form></section>
     <section className="panel table-panel"><div className="table-toolbar"><div><strong>Membros da empresa</strong><small>{query.data?.length ?? 0} pessoas com acesso</small></div></div>{query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data?.length ? <div className="table-scroll"><table><thead><tr><th>MEMBRO</th><th>USUÁRIO</th><th>E-MAIL</th><th>PAPEL</th><th>PERMISSÕES</th><th /></tr></thead><tbody>{query.data.map((member) => <tr key={member.id}><td><span className="table-person static-person"><span className="contact-avatar">{displayName(member.user).slice(0, 1).toUpperCase()}</span><strong>{displayName(member.user)}</strong></span></td><td className="subtle-cell">{member.user.username}</td><td className="subtle-cell">{member.user.email || "—"}</td><td>{member.role === "owner" ? <Badge tone="brand">Proprietário</Badge> : <select aria-label={`Papel de ${member.user.username}`} className="role-select" disabled={changeRole.isPending} value={member.role} onChange={(event) => changeRole.mutate({ member, next: event.target.value })}><option value="admin">Administrador</option><option value="agent">Atendente</option></select>}</td><td><small>{member.role === "agent" ? "Atendimento e contatos" : "Operação, equipe e configurações"}</small></td><td>{member.role !== "owner" && <button className="icon-button danger-icon" aria-label={`Remover ${member.user.username}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Remover ${displayName(member.user)} da equipe?`)) remove.mutate(member.id); }}><X size={16} /></button>}</td></tr>)}</tbody></table></div> : <Empty icon={Users} title="Sua equipe começa aqui" text="Adicione um usuário existente para compartilhar o atendimento." />}</section>
+  </div>;
+}
+
+function OrdersPage() {
+  const { company } = useApp();
+  const companyId = company?.id ?? "";
+  const canDecide = roleCanManage(company?.role);
+  const queryClient = useQueryClient();
+  const [status, setStatus] = useState("awaiting_approval");
+  const [feedback, setFeedback] = useState("");
+  const query = useQuery({
+    queryKey: ["orders", companyId, status],
+    queryFn: () => listOrders(companyId, status),
+    enabled: !!companyId,
+  });
+  const decision = useMutation({
+    mutationFn: ({ order, action }: { order: Order; action: "approve" | "reject" }) =>
+      decideOrder(companyId, order.id, action),
+    onSuccess: async () => {
+      setFeedback("Decisão registrada e comunicação ao cliente solicitada.");
+      await queryClient.invalidateQueries({ queryKey: ["orders", companyId] });
+    },
+    onError: (error: unknown) => setFeedback(errorMessage(error)),
+  });
+  const statusLabel: Record<string, string> = {
+    awaiting_approval: "Aguardando aprovação", approved: "Aprovado", rejected: "Rejeitado", cancelled: "Cancelado",
+  };
+  return <div className="page-stack">
+    <PageTitle eyebrow="VALIDAÇÃO HUMANA" title="Pedidos" description="Pedidos preparados pela IA só são confirmados após uma decisão humana registrada." />
+    <div className="filter-row"><select aria-label="Status do pedido" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Todos</option><option value="awaiting_approval">Aguardando aprovação</option><option value="approved">Aprovados</option><option value="rejected">Rejeitados</option><option value="cancelled">Cancelados</option></select></div>
+    {feedback && <div className="settings-note">{feedback}</div>}
+    {query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data.results.length ? <div className="number-grid">{query.data.results.map((order) => <article className="panel number-card" key={order.id}>
+      <div className="number-card-head"><span className="number-icon"><ShoppingCart size={20} /></span><Badge tone={order.status === "awaiting_approval" ? "brand" : order.status === "approved" ? "green" : "neutral"}>{statusLabel[order.status]}</Badge></div>
+      <span className="eyebrow">PEDIDO {order.id.slice(0, 8).toUpperCase()}</span><h2>{order.customer_name || order.customer_phone}</h2>
+      {order.items.map((item, index) => <p key={`${item.name}-${index}`}>{item.quantity || "Quantidade não informada"} · {item.name}</p>)}
+      {order.total && <p><strong>R$ {order.total}</strong></p>}{order.requested_for && <p>Prazo: {order.requested_for}</p>}{order.summary && <p>{order.summary}</p>}
+      {canDecide && order.status === "awaiting_approval" && <div className="number-actions"><button className="button button-primary button-small" disabled={decision.isPending} onClick={() => decision.mutate({ order, action: "approve" })}><Check size={15} /> Aprovar</button><button className="button button-secondary button-small" disabled={decision.isPending} onClick={() => decision.mutate({ order, action: "reject" })}><X size={15} /> Rejeitar</button></div>}
+    </article>)}</div> : <div className="panel empty-panel"><Empty icon={ShoppingCart} title="Nenhum pedido neste status" text="Pedidos identificados pela IA aparecerão aqui para validação humana." /></div>}
   </div>;
 }
 
@@ -1306,6 +1422,7 @@ function ProtectedApp({ session }: { session: Session }) {
     <Route path="/dashboard" element={<DashboardPage />} />
     <Route path="/inbox" element={<InboxPage />} />
     <Route path="/contacts" element={<ContactsPage />} />
+    <Route path="/orders" element={<OrdersPage />} />
     <Route path="/knowledge" element={roleCanManage(company.role) ? <KnowledgePage /> : <AccessDenied />} />
     <Route path="/media" element={roleCanManage(company.role) ? <MediaLibraryPage /> : <AccessDenied />} />
     <Route path="/numbers" element={<NumbersPage />} />

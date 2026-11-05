@@ -15,6 +15,8 @@ import type {
   User,
   WhatsAppNumber,
   WhatsAppNumberInput,
+  Order,
+  EmbeddedSignupConfig,
 } from "./types";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
@@ -519,6 +521,35 @@ export async function updateNumber(
 
 export async function deleteNumber(companyId: string, numberId: number): Promise<void> {
   await http.delete(companyPath(companyId, `whatsapp-numbers/${numberId}/`));
+}
+
+export async function getEmbeddedSignupConfig(companyId: string): Promise<EmbeddedSignupConfig> {
+  const { data } = await http.get<EmbeddedSignupConfig>(
+    companyPath(companyId, "whatsapp/embedded-signup/config/"),
+  );
+  return data;
+}
+
+export async function completeEmbeddedSignup(
+  companyId: string,
+  payload: { code: string; waba_id: string; phone_number_id: string; event: string },
+): Promise<WhatsAppNumber> {
+  const { data } = await http.post<WhatsAppNumber>(
+    companyPath(companyId, "whatsapp/embedded-signup/complete/"), payload,
+  );
+  return data;
+}
+
+export async function listOrders(companyId: string, status = "") {
+  const { data } = await http.get<Page<Order>>(companyPath(companyId, "orders/"), {
+    params: status ? { status } : undefined,
+  });
+  return data;
+}
+
+export async function decideOrder(companyId: string, orderId: string, action: "approve" | "reject") {
+  const { data } = await http.post<Order>(companyPath(companyId, `orders/${orderId}/${action}/`));
+  return data;
 }
 
 export async function listMembers(companyId: string) {

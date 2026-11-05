@@ -160,9 +160,38 @@ export interface WhatsAppNumber {
   phone_number_id: string;
   display_phone_number: string;
   business_account_id: string;
+  connection_mode?: "manual" | "coexistence";
+  connected_at?: string | null;
+  connection_error?: string;
   ai_enabled: boolean;
   is_active: boolean;
   created_at: string;
+}
+
+export type OrderStatus = "awaiting_approval" | "approved" | "rejected" | "cancelled";
+export interface Order {
+  id: string;
+  conversation: number;
+  customer_name: string;
+  customer_phone: string;
+  status: OrderStatus;
+  items: Array<{ name: string; quantity?: string; unit_price?: number | null }>;
+  total: string | null;
+  requested_for: string;
+  notes: string;
+  summary: string;
+  approved_by: User | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmbeddedSignupConfig {
+  app_id: string;
+  config_id: string;
+  api_version: string;
+  feature_type: "whatsapp_business_app_onboarding";
+  session_info_version: "3";
 }
 
 export interface WhatsAppNumberInput {
