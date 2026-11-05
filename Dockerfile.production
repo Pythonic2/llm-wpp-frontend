@@ -1,4 +1,7 @@
-FROM node:22-alpine AS build
+# The frontend build only produces architecture-independent static files. Run
+# Node on the builder's native architecture so ARM64 cross-builds do not have
+# to execute npm (and its native binaries) through QEMU.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
