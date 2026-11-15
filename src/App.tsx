@@ -69,6 +69,7 @@ import {
   deleteMediaAsset,
   deleteMediaCategory,
   deleteNumber,
+  disconnectNumber,
   downloadMessageAttachment,
   errorMessage,
   getContact,
@@ -128,6 +129,9 @@ import type {
   Order,
 } from "./types";
 import { formatDate, formatPhone, formatTime } from "./format";
+import { loadFacebookSdk, launchEmbeddedSignup } from "./facebookSignup";
+import { CatalogPage, SalesPage, FinancePage, CommercialSettings, CommercialSummary } from "./Commercial";
+import { LandingPage, SignupPage, CheckoutStatusPage, VerifyEmailPage, AddCompanyPage, ExtraNumberPurchase } from "./Billing";
 
 const AppContext = createContext<{
   session: Session;
@@ -319,7 +323,7 @@ function LoginPage() {
               {mutation.isPending ? <LoaderCircle className="spin" size={17} /> : <>Entrar na plataforma <ArrowRight size={17} /></>}
             </button>
           </form>
-          <div className="login-footnote"><Shield size={14} /> Ambiente seguro, acesso protegido por sessão.</div>
+          <div className="login-footnote"><Shield size={14} /> Ambiente seguro, acesso protegido por sessão.</div><div className="login-footnote">Ainda não tem conta? <Link to="/signup">Criar conta e assinar</Link></div>
         </div>
       </div>
     </main>
@@ -363,6 +367,9 @@ const navItems = [
   { to: "/inbox", label: "Caixa de entrada", icon: MessageCircle },
   { to: "/contacts", label: "Contatos", icon: Users },
   { to: "/orders", label: "Pedidos", icon: ShoppingCart },
+  { to: "/sales", label: "Vendas", icon: ShoppingCart, admin: true },
+  { to: "/catalog", label: "Catálogo", icon: FolderTree, admin: true },
+  { to: "/finance", label: "Financeiro", icon: LayoutDashboard, admin: true },
   { to: "/knowledge", label: "Conhecimento", icon: BookOpen, admin: true },
   { to: "/media", label: "Mídias da IA", icon: ImageIcon, admin: true },
   { to: "/numbers", label: "WhatsApp", icon: Smartphone },
@@ -375,6 +382,7 @@ function AppShell({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [logoutError, setLogoutError] = useState<unknown>(null);
   const renewal = useQuery({
     queryKey: queryKeys.sessionRenewal,
@@ -396,6 +404,7 @@ function AppShell({ children }: PropsWithChildren) {
   const switchCompany = (id: string) => {
     if (!session.companies.some((item) => item.id === id) || id === company?.id) return;
     selectCompany(id);
+    setCompanyMenuOpen(false);
     navigate("/dashboard");
   };
   const items = navItems.filter((item) => !item.admin || roleCanManage(company?.role));
@@ -404,15 +413,9 @@ function AppShell({ children }: PropsWithChildren) {
       {menuOpen && <button className="mobile-scrim" aria-label="Fechar navegação" onClick={() => setMenuOpen(false)} />}
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <Link className="brand" to="/dashboard"><span className="brand-mark"><MessageCircle size={19} /></span>gest<span>tech</span></Link>
-        <div className="company-switcher">
-          <span className="company-avatar"><Building2 size={17} /></span>
-          <div className="company-switch-info">
-            <small>ESPAÇO DE TRABALHO</small>
-            <select aria-label="Empresa ativa" value={company?.id ?? ""} onChange={(event) => switchCompany(event.target.value)}>
-              {session.companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </div>
-          <ChevronDown size={15} />
+        <div className="company-switcher company-switcher-custom">
+          <button className="company-menu-trigger" aria-label="Empresa ativa" aria-expanded={companyMenuOpen} onClick={() => setCompanyMenuOpen(!companyMenuOpen)}><span className="company-avatar"><Building2 size={17} /></span><span className="company-switch-info"><small>ESPAÇO DE TRABALHO</small><strong>{company?.name}</strong></span><ChevronDown size={15} /></button>
+          {companyMenuOpen && <div className="company-menu" role="menu"><span className="company-menu-title">Suas empresas</span>{session.companies.map(item => <button role="menuitem" className={item.id === company?.id ? "company-menu-current" : ""} key={item.id} onClick={() => switchCompany(item.id)}><span className="company-avatar"><Building2 size={15} /></span><span>{item.name}<small>{roleLabel[item.role]}</small></span>{item.id === company?.id && <Check size={14} />}</button>)}{company?.role === "owner" && <Link className="company-menu-add" role="menuitem" to="/companies/new" onClick={() => setCompanyMenuOpen(false)}><Plus size={16} /> Adicionar empresa <small>R$ 199,90/mês</small></Link>}</div>}
         </div>
         <span className="nav-label">MENU PRINCIPAL</span>
         <nav className="sidebar-nav" aria-label="Navegação principal">
@@ -474,6 +477,7 @@ function DashboardPage() {
       <section className="stat-grid">{cards.map(({ label, value, icon: Icon, tone }) => (
         <article className="stat-card" key={label}><span className={`stat-icon stat-${tone}`}><Icon size={19} /></span><span className="stat-label">{label}</span><strong className="stat-number">{value.toLocaleString("pt-BR")}</strong></article>
       ))}</section>
+      {roleCanManage(company?.role) && <CommercialSummary companyId={id} />}
       <section className="dashboard-grid">
         <div className="panel recent-panel">
           <div className="follow-up-heading"><div><span className="follow-up-alert"><Target size={14} /> OPORTUNIDADES PARA RETOMAR</span><h2>Follow-ups pendentes</h2><p>Leads com potencial que ainda não fecharam.</p></div><strong>{data.follow_ups_due ?? 0}</strong></div>
@@ -655,7 +659,7 @@ function InboxPage() {
           <div className="detail-section sales-analysis"><span className="detail-label">ANÁLISE COMERCIAL DA IA</span><div className="analysis-score"><span className={`temperature-pill temperature-${selected.lead_temperature ?? "unknown"}`}>{temperatureLabel[selected.lead_temperature ?? "unknown"]}</span><strong>{selected.purchase_intent_score ?? 0}%</strong></div>{selected.analysis_summary && <p>{selected.analysis_summary}</p>}{(selected.buying_signals ?? []).length > 0 && <div><small>Sinais de compra</small><ul>{(selected.buying_signals ?? []).map((signal) => <li key={signal}>{signal}</li>)}</ul></div>}{(selected.objections ?? []).length > 0 && <div><small>Objeções</small><ul>{(selected.objections ?? []).map((objection) => <li key={objection}>{objection}</li>)}</ul></div>}{selected.recommended_action && <div className="recommended-action"><Target size={13} /><span>{selected.recommended_action}</span></div>}<button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "analyze" })}><RefreshCw size={13} /> Reanalisar</button></div>
           {selected.opportunity_status === "open" && selected.lead_temperature && selected.lead_temperature !== "unknown" && <div className="detail-section"><span className="detail-label">FOLLOW-UP</span>{selected.next_follow_up_at && <p className="follow-up-date"><Clock3 size={13} /> Retorno em {formatDate(selected.next_follow_up_at)}</p>}<button className="button button-primary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "complete-follow-up" })}><Check size={13} /> Follow-up realizado</button><button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "snooze-follow-up", payload: { days: 3 } })}><Clock3 size={13} /> Adiar 3 dias</button><div className="opportunity-actions"><button disabled={action.isPending} onClick={() => action.mutate({ name: "mark-won" })}>Marcar como ganha</button><button disabled={action.isPending} onClick={() => action.mutate({ name: "mark-lost" })}>Marcar como perdida</button></div></div>}
           <div className="detail-section"><span className="detail-label">ATENDIMENTO</span><label className="detail-control">Responsável<select aria-label="Responsável da conversa" value={selected.assigned_to?.id ?? ""} disabled={action.isPending} onChange={(event) => action.mutate({ name: "assign", payload: { user_id: event.target.value || null } })}><option value="">Não atribuído</option>{members.data?.map((member) => <option value={member.user.id} key={member.id}>{displayName(member.user)}</option>)}{session.user && !members.data?.some((item) => item.user.id === session.user.id) && <option value={session.user.id}>{displayName(session.user)}</option>}</select></label>{selected.assigned_to?.id !== session.user.id && <button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "assign", payload: { user_id: session.user.id } })}>Assumir conversa</button>}<button className="button button-secondary button-small ai-control-button" disabled={action.isPending} onClick={() => action.mutate({ name: selected.ai_paused ? "resume-ai" : "pause-ai" })}>{selected.ai_paused ? <><Play size={15} /> Reativar IA</> : <><Pause size={15} /> Pausar IA</>}</button><label className="detail-control">Status<select aria-label="Status da conversa" value={selected.status} disabled={update.isPending} onChange={(event) => update.mutate({ status: event.target.value })}><option value="open">Aberta</option><option value="qualifying">Em qualificação</option><option value="qualified">Qualificada</option><option value="closed">Encerrada</option></select></label><LeadStageEditor key={`${selected.id}-${selected.lead_stage}`} value={selected.lead_stage} disabled={update.isPending} onSave={(lead_stage) => update.mutate({ lead_stage })} /><label className="detail-control">Dados do lead (JSON)<LeadDataEditor key={`${selected.id}-${JSON.stringify(selected.lead_data)}`} data={selected.lead_data} disabled={update.isPending} onSave={(value) => update.mutate({ lead_data: value })} /></label></div>
-          <div className="detail-section"><span className="detail-label">AÇÕES</span><button className="detail-action danger-action" disabled={action.isPending} onClick={() => { if (window.confirm(selected.status === "closed" ? "Reabrir esta conversa?" : "Encerrar esta conversa?")) action.mutate({ name: selected.status === "closed" ? "reopen" : "close" }); }}>{selected.status === "closed" ? <><Play size={15} /> Reabrir conversa</> : <><X size={15} /> Encerrar conversa</>}</button></div>
+          <div className="detail-section"><span className="detail-label">AÇÕES</span>{roleCanManage(company?.role) && <Link className="button button-primary button-small" to={`/sales?conversation=${selected.id}`}>Registrar venda</Link>}<button className="detail-action danger-action" disabled={action.isPending} onClick={() => { if (window.confirm(selected.status === "closed" ? "Reabrir esta conversa?" : "Encerrar esta conversa?")) action.mutate({ name: selected.status === "closed" ? "reopen" : "close" }); }}>{selected.status === "closed" ? <><Play size={15} /> Reabrir conversa</> : <><X size={15} /> Encerrar conversa</>}</button></div>
           <div className="detail-foot"><Phone size={14} /> WhatsApp · contato #{selected.contact.id}</div>
         </aside>}
       </div>
@@ -1094,80 +1098,33 @@ function AuthenticatedMediaPreview({ asset }: { asset: MediaAsset }) {
     : <video src={source} controls preload="metadata" />;
 }
 
-declare global {
-  interface Window {
-    FB?: {
-      init: (options: Record<string, unknown>) => void;
-      login: (callback: (response: { authResponse?: { code?: string } }) => void, options: Record<string, unknown>) => void;
-    };
-  }
-}
-
-async function loadFacebookSdk(appId: string, apiVersion: string) {
-  if (!window.FB) {
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement("script");
-      script.id = "facebook-jssdk";
-      script.src = "https://connect.facebook.net/pt_BR/sdk.js";
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("Não foi possível carregar a autenticação da Meta."));
-      document.body.appendChild(script);
-    });
-  }
-  window.FB?.init({ appId, autoLogAppEvents: true, xfbml: false, version: apiVersion });
-}
-
-async function launchCoexistence(config: Awaited<ReturnType<typeof getEmbeddedSignupConfig>>) {
-  await loadFacebookSdk(config.app_id, config.api_version);
-  return new Promise<{ code: string; waba_id: string; phone_number_id: string; event: string }>((resolve, reject) => {
-    let session: { waba_id: string; phone_number_id: string; event: string } | null = null;
-    let code = "";
-    const finish = () => {
-      if (session && code) { window.removeEventListener("message", listener); resolve({ code, ...session }); }
-    };
-    const listener = (event: MessageEvent) => {
-      if (!/^https:\/\/([a-z0-9-]+\.)*facebook\.com$/i.test(event.origin)) return;
-      try {
-        const payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
-        if (payload.event === "CANCEL" || payload.event === "ERROR") {
-          window.removeEventListener("message", listener);
-          reject(new Error(payload.data?.error_message || "A conexão foi cancelada na Meta."));
-        } else if (payload.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") {
-          if (!payload.data?.waba_id || !payload.data?.phone_number_id) {
-            reject(new Error("A Meta não retornou os identificadores do número."));
-            return;
-          }
-          session = { event: payload.event, waba_id: payload.data.waba_id, phone_number_id: payload.data.phone_number_id };
-          finish();
-        }
-      } catch { /* Mensagem sem relação com o Embedded Signup. */ }
-    };
-    window.addEventListener("message", listener);
-    window.FB?.login((response) => {
-      code = response.authResponse?.code ?? "";
-      if (!code) { window.removeEventListener("message", listener); reject(new Error("A Meta não autorizou a conexão.")); return; }
-      finish();
-    }, {
-      config_id: config.config_id,
-      response_type: "code",
-      override_default_response_type: true,
-      extras: { setup: {}, featureType: config.feature_type, sessionInfoVersion: config.session_info_version },
-    });
-  });
-}
-
 function NumbersPage() {
   const { company } = useApp();
   const companyId = company?.id ?? "";
   const canManage = roleCanManage(company?.role);
   const queryClient = useQueryClient();
+  const [sdkReady, setSdkReady] = useState(false);
+  const [migrationConsent, setMigrationConsent] = useState(false);
   const [page, setPage] = useState(1);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [values, setValues] = useState<WhatsAppNumberInput>(emptyNumberInput());
+  const signupConfig = useQuery({
+    queryKey: ["embedded-signup-config", companyId],
+    queryFn: () => getEmbeddedSignupConfig(companyId),
+    enabled: !!companyId && canManage,
+    refetchInterval: 240_000,
+  });
+  useEffect(() => {
+    if (!signupConfig.data) return;
+    let cancelled = false;
+    setSdkReady(false);
+    loadFacebookSdk(signupConfig.data.app_id, signupConfig.data.api_version)
+      .then(() => { if (!cancelled) setSdkReady(true); })
+      .catch((error: unknown) => { if (!cancelled) setFormError(errorMessage(error)); });
+    return () => { cancelled = true; };
+  }, [signupConfig.data]);
   const query = useQuery({
     queryKey: [...queryKeys.numbers(companyId), page],
     queryFn: () => listNumbers(companyId, { page }),
@@ -1196,12 +1153,28 @@ function NumbersPage() {
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
   const connect = useMutation({
-    mutationFn: async () => completeEmbeddedSignup(
-      companyId, await launchCoexistence(await getEmbeddedSignupConfig(companyId)),
-    ),
-    onSuccess: async () => { setFormError(""); await invalidate(); },
+    mutationFn: (payload: Awaited<ReturnType<typeof launchEmbeddedSignup>>) => completeEmbeddedSignup(companyId, payload),
+    onSuccess: async () => { setFormError(""); await invalidate(); void signupConfig.refetch(); },
+    onError: (error: unknown) => { setFormError(errorMessage(error)); void signupConfig.refetch(); },
+  });
+  const disconnect = useMutation({
+    mutationFn: (id: number) => disconnectNumber(companyId, id),
+    onSuccess: () => void invalidate(),
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
+  const startConnection = () => {
+    if (!migrationConsent) { setFormError("Leia e confirme os riscos antes de continuar."); return; }
+    if (!signupConfig.data || !sdkReady || Date.now() - signupConfig.dataUpdatedAt > 300_000) {
+      setFormError(signupConfig.isError ? errorMessage(signupConfig.error) : "A conexão está sendo preparada. Aguarde e tente novamente.");
+      void signupConfig.refetch();
+      return;
+    }
+    setFormError("");
+    void launchEmbeddedSignup(signupConfig.data).then((payload) => connect.mutate(payload)).catch((error: unknown) => {
+      setFormError(errorMessage(error));
+      void signupConfig.refetch();
+    });
+  };
   useEffect(() => {
     if (detail.data && detail.data.id === editingId) {
       const { phone_number_id, display_phone_number, business_account_id, ai_enabled, is_active } = detail.data;
@@ -1238,19 +1211,20 @@ function NumbersPage() {
     if (createOpen) create.mutate(cleanValues);
     else if (editingId !== null) update.mutate({ id: editingId, input: cleanValues });
   };
-  return <div className="page-stack"><PageTitle eyebrow="CANAIS DE ATENDIMENTO" title="Números do WhatsApp" description={canManage ? "Conecte seu número atual sem abandonar o WhatsApp Business no celular." : "Consulte os números cadastrados para esta empresa."} action={canManage && <><button className="button button-primary" disabled={connect.isPending} onClick={() => connect.mutate()}><Smartphone size={16} /> {connect.isPending ? "Conectando…" : "Conectar WhatsApp"}</button><button className="button button-secondary" onClick={openCreate}><Plus size={16} /> Cadastro manual</button></>} />
-    <div className="settings-note"><CircleHelp size={16} /> A conexão oficial usa coexistência. Se a Meta considerar o número inelegível, o Gest Tech interrompe o fluxo sem migrar ou excluir a conta existente.</div>
+  return <div className="page-stack"><PageTitle eyebrow="CANAIS DE ATENDIMENTO" title="Números do WhatsApp" description={canManage ? "Conecte um número pela Meta. Números elegíveis podem continuar no WhatsApp Business." : "Consulte os números cadastrados para esta empresa."} action={canManage && <><button className="button button-primary" disabled={connect.isPending || !sdkReady || !signupConfig.data || !migrationConsent} onClick={startConnection}><Smartphone size={16} /> {connect.isPending ? "Conectando…" : "Conectar WhatsApp"}</button><button className="button button-secondary" onClick={openCreate}><Plus size={16} /> Cadastro manual</button></>} />{companyId && <ExtraNumberPurchase companyId={companyId} />}
+    <div className="settings-note"><CircleHelp size={16} /><span>A Meta oferece conexão normal ou coexistência para números elegíveis. A coexistência mantém o aplicativo, mas alguns recursos e aparelhos vinculados podem mudar. A conexão normal de um número usado no WhatsApp Business pode impedir seu uso no aplicativo. O Gest Tech não inicia uma migração por API.<br /><label><input type="checkbox" checked={migrationConsent} onChange={(event) => setMigrationConsent(event.target.checked)} /> Entendi os riscos e autorizo a opção que eu selecionar na Meta, inclusive a possível migração se escolher conexão normal.</label></span></div>
+    {signupConfig.isError && canManage && <ErrorNotice error={signupConfig.error} retry={() => void signupConfig.refetch()} />}
     {formError && !createOpen && editingId === null && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     {query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data.results.length ? <>
-      <div className="number-grid">{query.data.results.map((number) => <article className="panel number-card" key={number.id}><div className="number-card-head"><span className="number-icon"><Smartphone size={20} /></span><span className="number-statuses"><Badge tone={number.is_active ? "green" : "neutral"}>{number.is_active ? "Ativo" : "Inativo"}</Badge><Badge tone={number.ai_enabled ? "brand" : "neutral"}>{number.ai_enabled ? "IA ativa" : "IA desativada"}</Badge></span></div><span className="eyebrow">NÚMERO CADASTRADO</span><h2>{number.display_phone_number}</h2><p>ID do número · {number.phone_number_id}</p><p>Conta empresarial · {number.business_account_id || "Não informada"}</p>{canManage && <><div className="number-actions"><button className="button button-secondary button-small" onClick={() => openEdit(number)}>Detalhes e editar</button><button className="icon-button danger-icon" aria-label={`Excluir ${number.display_phone_number}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Excluir o número ${number.display_phone_number}?`)) remove.mutate(number.id); }}><X size={15} /></button></div><div className="number-toggles"><Toggle label="Número ativo" description="Recebe mensagens pelo webhook." disabled={update.isPending} checked={number.is_active} onChange={(active) => update.mutate({ id: number.id, input: { is_active: active, ...(!active ? { ai_enabled: false } : {}) } })} /><Toggle label="Respostas da IA" description="Permite respostas automáticas com Gemini." disabled={update.isPending || !number.is_active} checked={number.ai_enabled} onChange={(enabled) => update.mutate({ id: number.id, input: { ai_enabled: enabled } })} /></div></>}</article>)}</div>
+      <div className="number-grid">{query.data.results.map((number) => <article className="panel number-card" key={number.id}><div className="number-card-head"><span className="number-icon"><Smartphone size={20} /></span><span className="number-statuses"><Badge tone={number.is_active ? "green" : "neutral"}>{number.is_active ? "Ativo" : "Inativo"}</Badge><Badge tone={number.ai_enabled ? "brand" : "neutral"}>{number.ai_enabled ? "IA ativa" : "IA desativada"}</Badge></span></div><span className="eyebrow">NÚMERO CADASTRADO</span><h2>{number.display_phone_number}</h2><p>ID do número · {number.phone_number_id}</p><p>Conta empresarial · {number.business_account_name || number.business_account_id || "Não informada"}</p><p>Integração · {number.connection_state === "syncing" ? "Sincronizando" : number.connection_state === "sync_failed" ? "Sincronização pendente" : number.connection_state === "history_declined" ? "Histórico não compartilhado" : number.connection_state === "disconnected" ? "Desconectada" : "Conectada"}</p><p>Última sincronização · {number.last_synced_at ? new Date(number.last_synced_at).toLocaleString("pt-BR") : "Ainda não disponível"}</p>{number.connection_error && <p role="alert">{number.connection_error}</p>}{canManage && <><div className="number-actions"><button className="button button-secondary button-small" onClick={() => openEdit(number)}>Detalhes e editar</button>{(number.connection_mode ?? "manual") === "manual" ? <button className="icon-button danger-icon" aria-label={`Excluir ${number.display_phone_number}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Excluir o número ${number.display_phone_number}?`)) remove.mutate(number.id); }}><X size={15} /></button> : number.connection_state !== "disconnected" ? <button className="button button-secondary button-small" disabled={disconnect.isPending} onClick={() => { if (window.confirm(`Desconectar ${number.display_phone_number} do Gest Tech? O histórico será preservado. Na coexistência, a desconexão da Cloud API no aplicativo WhatsApp Business é uma etapa separada.`)) disconnect.mutate(number.id); }}>Desconectar</button> : <button className="button button-secondary button-small" onClick={startConnection}>Reconectar</button>}</div><div className="number-toggles">{number.connection_mode === "coexistence" && <Toggle label="Pausar IA após resposta no aplicativo" description="Evita respostas automáticas após um atendente responder no WhatsApp Business." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.pause_ai_on_app_echo ?? true} onChange={(enabled) => update.mutate({ id: number.id, input: { pause_ai_on_app_echo: enabled } })} />}<Toggle label="Número ativo" description="Recebe mensagens pelo webhook." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.is_active} onChange={(active) => update.mutate({ id: number.id, input: { is_active: active, ...(!active ? { ai_enabled: false } : {}) } })} /><Toggle label="Respostas da IA" description="Permite respostas automáticas com Gemini." disabled={update.isPending || !number.is_active || number.connection_state === "disconnected"} checked={number.ai_enabled} onChange={(enabled) => update.mutate({ id: number.id, input: { ai_enabled: enabled } })} /></div></>}</article>)}</div>
       <Pagination page={page} count={query.data.count} onPage={setPage} />
-    </> : <div className="panel empty-panel"><Empty icon={Smartphone} title="Nenhum número cadastrado" text="Cadastre os IDs do número já configurado no painel da Meta." action={<button className="button button-primary button-small" onClick={openCreate}><Plus size={15} /> Cadastrar número</button>} /></div>}
-    {canManage && (createOpen || editingId !== null) && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeForm(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="number-modal-title"><div className="modal-heading"><div><span className="eyebrow">CONFIGURAÇÃO MANUAL</span><h2 id="number-modal-title">{createOpen ? "Cadastrar número" : "Detalhes do número"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={closeForm}><X size={18} /></button></div>
+    </> : <div className="panel empty-panel"><Empty icon={Smartphone} title="Nenhum número cadastrado" text="Conecte um número pelo cadastro oficial da Meta para começar o atendimento." action={canManage ? <button className="button button-primary button-small" disabled={connect.isPending || !sdkReady || !signupConfig.data || !migrationConsent} onClick={startConnection}><Smartphone size={15} /> Conectar WhatsApp</button> : undefined} /></div>}
+    {canManage && (createOpen || editingId !== null) && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeForm(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="number-modal-title"><div className="modal-heading"><div><span className="eyebrow">{createOpen || detail.data?.connection_mode === "manual" ? "CONFIGURAÇÃO MANUAL" : "INTEGRAÇÃO OFICIAL"}</span><h2 id="number-modal-title">{createOpen ? "Cadastrar número" : "Detalhes do número"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={closeForm}><X size={18} /></button></div>
       {detail.isError && <ErrorNotice error={detail.error} retry={() => void detail.refetch()} />}
       {detail.isPending && !createOpen ? <Loading /> : <form className="stack-form" onSubmit={saveNumber}>
-        <label>Phone number ID<input required maxLength={64} value={values.phone_number_id} onChange={(event) => setValues({ ...values, phone_number_id: event.target.value })} /></label>
-        <label>Número exibido<input required maxLength={32} placeholder="+55 11 99999-9999" value={values.display_phone_number} onChange={(event) => setValues({ ...values, display_phone_number: event.target.value })} /></label>
-        <label>Business account ID<input maxLength={64} value={values.business_account_id} onChange={(event) => setValues({ ...values, business_account_id: event.target.value })} /></label>
+        <label>Phone number ID<input required disabled={!createOpen && detail.data?.connection_mode !== "manual"} maxLength={64} value={values.phone_number_id} onChange={(event) => setValues({ ...values, phone_number_id: event.target.value })} /></label>
+        <label>Número exibido<input required disabled={!createOpen && detail.data?.connection_mode !== "manual"} maxLength={32} placeholder="+55 11 99999-9999" value={values.display_phone_number} onChange={(event) => setValues({ ...values, display_phone_number: event.target.value })} /></label>
+        <label>Business account ID<input disabled={!createOpen && detail.data?.connection_mode !== "manual"} maxLength={64} value={values.business_account_id} onChange={(event) => setValues({ ...values, business_account_id: event.target.value })} /></label>
         <Toggle label="Número ativo" description="Permite o recebimento pelo webhook." checked={values.is_active} onChange={(is_active) => setValues({ ...values, is_active, ...(!is_active ? { ai_enabled: false } : {}) })} />
         <Toggle label="Respostas da IA" description="Permite respostas automáticas nesta linha." checked={values.ai_enabled} disabled={!values.is_active} onChange={(ai_enabled) => setValues({ ...values, ai_enabled })} />
         {formError && <div className="inline-error" role="alert">{formError}</div>}
@@ -1370,6 +1344,7 @@ function SettingsPage() {
   };
   return <div className="page-stack"><PageTitle eyebrow="SUA ORGANIZAÇÃO" title="Configurações" description="Informações da empresa e situação das integrações conectadas." />
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Building2 size={18} /></span><div><h2>Dados da empresa</h2><p>Identificação do espaço de trabalho.</p></div></div><div className="settings-fields"><label>Nome da empresa<input value={data.name} readOnly /></label><label>Identificador<input value={data.slug} readOnly /></label><label>Papel do usuário<input value={roleLabel[company?.role ?? "agent"]} readOnly /></label><label>Usuário<input value={session.user.username} readOnly /></label><label>ID da empresa<input value={data.id} readOnly /></label><label>Desde<input value={formatDate(data.created_at)} readOnly /></label></div><div className="settings-note"><Shield size={16} /> Os dados cadastrais são gerenciados pelo administrador do sistema.</div></section>
+    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><ShoppingCart size={18} /></span><div><h2>Perfil comercial</h2><p>Produtos, serviços e configurações financeiras opcionais.</p></div></div><Link className="button button-secondary" to="/commercial-settings">Abrir configurações comerciais</Link></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Integrações</h2><p>Conexões configuradas no servidor, sem exposição de credenciais.</p></div></div><div className="integration-row"><span className="integration-logo whats-logo"><MessageCircle size={19} /></span><span><strong>WhatsApp Cloud API</strong><small>Integração para envio e recebimento de mensagens.</small></span><Badge tone={data.integrations?.whatsapp_configured ? "green" : "peach"}>{data.integrations?.whatsapp_configured ? "Configurada" : "Pendente"}</Badge></div><div className="integration-row"><span className="integration-logo gemini-logo"><Sparkles size={19} /></span><span><strong>Google Gemini</strong><small>Geração de respostas e embeddings para busca RAG.</small></span><Badge tone={data.integrations?.gemini_configured ? "green" : "peach"}>{data.integrations?.gemini_configured ? "Configurada" : "Pendente"}</Badge></div></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Personalidade da IA</h2><p>Defina como a IA deve atender os clientes desta empresa.</p></div></div><form className="ai-instructions-form" onSubmit={(event) => { event.preventDefault(); setPromptFeedback(""); if (aiInstructions.trim()) saveInstructions.mutate(); }}><label>Instruções de atendimento<textarea aria-label="Instruções de atendimento da IA" value={aiInstructions} maxLength={8000} rows={9} onChange={(event) => { setAiInstructions(event.target.value); setPromptFeedback(""); }} /><span className="prompt-counter">{aiInstructions.length}/8000 caracteres</span></label><div className="prompt-guidance"><strong>Como escrever um bom prompt</strong><p>Explique o papel da IA, o tipo de cliente, o tom de voz, os objetivos do atendimento e o que ela deve evitar. Não inclua senhas, tokens ou dados pessoais.</p><p>Você pode pedir a uma IA: “Crie instruções para um atendente virtual de [seu nicho], com tom [formal, acolhedor, urgente…], que deve [objetivos] e nunca deve [limites]”.</p></div><div className="prompt-actions"><button className="button button-secondary" type="button" onClick={() => { setAiInstructions(DEFAULT_AI_INSTRUCTIONS_EXAMPLE); setPromptFeedback(""); }}>Usar exemplo genérico</button><button className="button button-primary" type="submit" disabled={!aiInstructions.trim() || saveInstructions.isPending}>{saveInstructions.isPending ? "Salvando…" : "Salvar instruções"}</button></div>{promptFeedback && <small className={saveInstructions.isError ? "field-error" : "copy-feedback"} role="status">{promptFeedback}</small>}<div className="settings-note"><Shield size={16} /> Regras de segurança, isolamento entre empresas e uso exclusivo da base de conhecimento continuam protegidas pelo sistema.</div></form></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Shield size={18} /></span><div><h2>Webhook da Meta</h2><p>Cadastre este endereço na configuração do aplicativo da Meta.</p></div></div><div className="webhook-copy-row"><label className="webhook-field">URL do webhook<input readOnly value={webhookUrl} /></label><button className="button button-secondary button-small" onClick={() => void copyWebhook()}>Copiar URL</button></div>{copyFeedback && <small role="status" className="copy-feedback">{copyFeedback}</small>}<div className="settings-note"><CircleHelp size={16} /> No painel da Meta, configure esta URL pública (HTTPS) como callback do webhook e assine os eventos de mensagens. O token de verificação e o segredo permanecem no servidor; não há conexão fictícia ou cadastro automático de número.</div></section>
@@ -1423,6 +1398,11 @@ function ProtectedApp({ session }: { session: Session }) {
     <Route path="/inbox" element={<InboxPage />} />
     <Route path="/contacts" element={<ContactsPage />} />
     <Route path="/orders" element={<OrdersPage />} />
+    <Route path="/sales" element={roleCanManage(company.role) ? <SalesPage companyId={company.id} /> : <AccessDenied />} />
+    <Route path="/catalog" element={roleCanManage(company.role) ? <CatalogPage companyId={company.id} /> : <AccessDenied />} />
+    <Route path="/finance" element={roleCanManage(company.role) ? <FinancePage companyId={company.id} /> : <AccessDenied />} />
+    <Route path="/commercial-settings" element={roleCanManage(company.role) ? <CommercialSettings companyId={company.id} /> : <AccessDenied />} />
+    <Route path="/companies/new" element={company.role === "owner" ? <AddCompanyPage /> : <AccessDenied />} />
     <Route path="/knowledge" element={roleCanManage(company.role) ? <KnowledgePage /> : <AccessDenied />} />
     <Route path="/media" element={roleCanManage(company.role) ? <MediaLibraryPage /> : <AccessDenied />} />
     <Route path="/numbers" element={<NumbersPage />} />
@@ -1445,7 +1425,8 @@ export default function App() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const cachedSession = queryClient.getQueryData<Session>(queryKeys.session);
-  const shouldCheckSession = location.pathname !== "/login" || !!cachedSession;
+  const publicPage = ["/", "/signup", "/checkout/status", "/verify-email"].includes(location.pathname);
+  const shouldCheckSession = !publicPage && (location.pathname !== "/login" || !!cachedSession);
   useEffect(() => {
     const onExpired = () => {
       localStorage.removeItem("gest-tech-company");
@@ -1462,6 +1443,7 @@ export default function App() {
     enabled: shouldCheckSession,
     staleTime: 5 * 60 * 1000,
   });
+  if (publicPage) return <Routes><Route path="/" element={<LandingPage />} /><Route path="/signup" element={<SignupPage />} /><Route path="/checkout/status" element={<CheckoutStatusPage />} /><Route path="/verify-email" element={<VerifyEmailPage />} /></Routes>;
   if (location.pathname === "/login" && !sessionQuery.data) return <LoginPage />;
   if (sessionQuery.isPending) return <div className="full-loading"><Loading label="Preparando seu espaço…" /></div>;
   if (sessionQuery.isError && !isSessionExpiredError(sessionQuery.error)) {

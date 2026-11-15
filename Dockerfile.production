@@ -11,6 +11,8 @@ COPY . .
 # Production always talks to the same-origin Nginx proxy. Keeping this value
 # fixed prevents stale Portainer build arguments from embedding an external URL.
 ENV VITE_API_BASE_URL=/api/v1
+ARG VITE_BILLING_SANDBOX=false
+ENV VITE_BILLING_SANDBOX=$VITE_BILLING_SANDBOX
 
 RUN npm run build
 

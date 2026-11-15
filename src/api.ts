@@ -523,6 +523,11 @@ export async function deleteNumber(companyId: string, numberId: number): Promise
   await http.delete(companyPath(companyId, `whatsapp-numbers/${numberId}/`));
 }
 
+export async function disconnectNumber(companyId: string, numberId: number): Promise<WhatsAppNumber> {
+  const { data } = await http.post<WhatsAppNumber>(companyPath(companyId, `whatsapp-numbers/${numberId}/disconnect/`));
+  return data;
+}
+
 export async function getEmbeddedSignupConfig(companyId: string): Promise<EmbeddedSignupConfig> {
   const { data } = await http.get<EmbeddedSignupConfig>(
     companyPath(companyId, "whatsapp/embedded-signup/config/"),
@@ -532,7 +537,7 @@ export async function getEmbeddedSignupConfig(companyId: string): Promise<Embedd
 
 export async function completeEmbeddedSignup(
   companyId: string,
-  payload: { code: string; waba_id: string; phone_number_id: string; event: string },
+  payload: { code: string; waba_id: string; phone_number_id?: string; event: string; state: string; standard_migration_consent: boolean },
 ): Promise<WhatsAppNumber> {
   const { data } = await http.post<WhatsAppNumber>(
     companyPath(companyId, "whatsapp/embedded-signup/complete/"), payload,

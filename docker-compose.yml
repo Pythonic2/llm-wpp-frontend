@@ -1,7 +1,7 @@
 services:
   frontend:
     image: "ghcr.io/pythonic2/llm-wpp-frontend:${FRONTEND_IMAGE_TAG:?Defina FRONTEND_IMAGE_TAG no Portainer (ex.: sha-abc123...)}"
-    pull_policy: always
+    pull_policy: ${FRONTEND_PULL_POLICY:-always}
     restart: unless-stopped
     ports:
       - "8080:80"

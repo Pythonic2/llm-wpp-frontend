@@ -448,7 +448,7 @@ describe("Gest Tech protected app", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderApp("/numbers");
 
-    fireEvent.click(await screen.findByRole("button", { name: /Cadastrar número/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Cadastro manual/ }));
     fireEvent.change(screen.getByLabelText("Phone number ID"), { target: { value: "new-phone-id" } });
     fireEvent.change(screen.getByLabelText("Número exibido"), { target: { value: "+5511888888888" } });
     fireEvent.change(screen.getByLabelText("Business account ID"), { target: { value: "new-business-id" } });

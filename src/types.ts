@@ -19,6 +19,9 @@ export interface Company {
   created_at: string;
   role: Role;
   ai_instructions?: string;
+  business_profile?: "" | "products" | "services" | "both";
+  estimated_tax_percent?: string | null;
+  desired_margin_percent?: string | null;
   integrations?: {
     whatsapp_configured: boolean;
     gemini_configured: boolean;
@@ -160,7 +163,11 @@ export interface WhatsAppNumber {
   phone_number_id: string;
   display_phone_number: string;
   business_account_id: string;
-  connection_mode?: "manual" | "coexistence";
+  connection_mode?: "manual" | "coexistence" | "cloud_api";
+  connection_state?: "connected" | "syncing" | "sync_failed" | "history_declined" | "disconnected";
+  business_account_name?: string;
+  last_synced_at?: string | null;
+  pause_ai_on_app_echo?: boolean;
   connected_at?: string | null;
   connection_error?: string;
   ai_enabled: boolean;
@@ -192,6 +199,8 @@ export interface EmbeddedSignupConfig {
   api_version: string;
   feature_type: "whatsapp_business_app_onboarding";
   session_info_version: "3";
+  signup_version: "v4";
+  state: string;
 }
 
 export interface WhatsAppNumberInput {
@@ -200,6 +209,7 @@ export interface WhatsAppNumberInput {
   business_account_id: string;
   ai_enabled: boolean;
   is_active: boolean;
+  pause_ai_on_app_echo?: boolean;
 }
 
 export interface Membership {
