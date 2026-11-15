@@ -562,11 +562,21 @@ export async function listMembers(companyId: string) {
   return data;
 }
 
+export async function createStaff(values: { username: string; password: string; email?: string; role: "admin" | "agent"; company_ids: string[] }) {
+  const { data } = await http.post<{ user: User; company_ids: string[] }>("/team/staff/", values);
+  return data;
+}
+
+export async function changeInitialPassword(current_password: string, new_password: string) {
+  const { data } = await http.post<{ user: User }>("/auth/initial-password/", { current_password, new_password });
+  return data.user;
+}
+
 export async function addMember(
   companyId: string,
   values: { username?: string; email?: string; role: "admin" | "agent" },
 ) {
-  const { data } = await http.post<Membership>(companyPath(companyId, "members/"), values);
+  const { data } = await http.post<Membership & { invited?: boolean }>(companyPath(companyId, "members/"), values);
   return data;
 }
 

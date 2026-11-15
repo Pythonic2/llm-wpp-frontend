@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CheckoutStatusPage, LandingPage, SignupPage, VerifyEmailPage } from "./Billing";
+import { AddCompanyPage, CheckoutStatusPage, LandingPage, SignupPage, VerifyEmailPage } from "./Billing";
 import { http } from "./api";
 
 vi.mock("./api", () => ({
@@ -66,5 +66,20 @@ describe("Cadastro e confirmação de assinatura", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continuar para pagamento" }));
     await waitFor(() => expect(http.post).toHaveBeenCalledOnce());
     expect(await screen.findByRole("alert")).toHaveTextContent("Documento inválido");
+  });
+
+  it("pede e-mail de cobrança para uma conta legada e envia no checkout", async () => {
+    vi.mocked(http.get).mockResolvedValue({ data: { configured: true, email_required: true } });
+    vi.mocked(http.post).mockRejectedValue(new Error("Falha simulada"));
+    renderPage("/companies/new", <AddCompanyPage />);
+    expect(await screen.findByLabelText("E-mail de cobrança")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Nome da nova empresa"), { target: { value: "Empresa extra" } });
+    fireEvent.change(screen.getByLabelText("E-mail de cobrança"), { target: { value: "cobranca@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar para pagamento" }));
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith(
+      "/billing/extra-company/",
+      { company_name: "Empresa extra", billing_email: "cobranca@example.com" },
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
   });
 });

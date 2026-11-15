@@ -10,6 +10,7 @@ export interface User {
   email: string;
   first_name: string;
   last_name: string;
+  must_change_password?: boolean;
 }
 
 export interface Company {

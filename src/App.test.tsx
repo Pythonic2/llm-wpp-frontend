@@ -14,6 +14,8 @@ vi.mock("./api", async () => {
     getSession: vi.fn(),
     refreshSession: vi.fn(),
     login: vi.fn(),
+    createStaff: vi.fn(),
+    changeInitialPassword: vi.fn(),
     logout: vi.fn(),
     getCompany: vi.fn(),
     getDashboard: vi.fn(),
@@ -233,6 +235,38 @@ describe("Gest Tech protected app", () => {
     expect(screen.getByText(/Seu papel não tem permissão/)).toBeInTheDocument();
   });
 
+  it("creates a staff account only for the selected manageable companies", async () => {
+    const second = { ...companyB, role: "owner" as const };
+    vi.mocked(api.getSession).mockResolvedValue({ ...session, companies: [company, second] });
+    vi.mocked(api.createStaff).mockResolvedValue({ user: { ...session.user, username: "atendente" }, company_ids: [company.id, second.id] });
+    localStorage.setItem("gest-tech-company", company.id);
+    renderApp("/team");
+    expect(await screen.findByRole("heading", { name: "Equipe" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Usuário do funcionário"), { target: { value: "atendente" } });
+    fireEvent.change(screen.getByLabelText("Senha inicial"), { target: { value: "1234" } });
+    fireEvent.click(screen.getByLabelText(second.name));
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar funcionário" }));
+    await waitFor(() => expect(api.createStaff).toHaveBeenCalledWith({
+      username: "atendente", password: "1234", email: undefined, role: "agent",
+      company_ids: [company.id, second.id],
+    }));
+    expect(await screen.findByText(/Funcionário cadastrado/)).toBeInTheDocument();
+  });
+
+  it("requires the first password change before showing CRM data", async () => {
+    vi.mocked(api.getSession).mockResolvedValue({ ...session, user: { ...session.user, must_change_password: true } });
+    vi.mocked(api.changeInitialPassword).mockResolvedValue({ ...session.user, must_change_password: false });
+    renderApp("/dashboard");
+    expect(await screen.findByRole("heading", { name: "Troque sua senha" })).toBeInTheDocument();
+    expect(screen.queryByText("Conversas abertas")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Senha inicial"), { target: { value: "1234" } });
+    fireEvent.change(screen.getByLabelText("Nova senha"), { target: { value: "NewStrongPassword-2026" } });
+    fireEvent.change(screen.getByLabelText("Confirme a nova senha"), { target: { value: "NewStrongPassword-2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar nova senha" }));
+    await waitFor(() => expect(api.changeInitialPassword).toHaveBeenCalledWith("1234", "NewStrongPassword-2026"));
+    expect(await screen.findByText("Conversas abertas")).toBeInTheDocument();
+  });
+
   it("loads older chronological messages without replacing the latest page", async () => {
     vi.mocked(api.listConversations).mockResolvedValue({
       count: 1,
@@ -339,6 +373,15 @@ describe("Gest Tech protected app", () => {
     fireEvent.popState(window);
     expect(await screen.findByRole("heading", { name: "Área restrita" })).toBeInTheDocument();
     expect(api.listKnowledgeBases).not.toHaveBeenCalled();
+  });
+
+  it("explains why a staff account with no active company cannot enter", async () => {
+    vi.mocked(api.getSession).mockResolvedValue({ ...session, companies: [] });
+    vi.mocked(api.listCompanies).mockResolvedValue([]);
+    renderApp("/select-company");
+    expect(await screen.findByText("Nenhuma empresa ativa")).toBeInTheDocument();
+    expect(screen.getByText(/verificar se a assinatura da empresa está ativa/)).toBeInTheDocument();
+    expect(screen.queryByText("Conversas abertas")).not.toBeInTheDocument();
   });
 
   it("loads permitted companies and persists company changes", async () => {

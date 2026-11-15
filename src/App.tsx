@@ -54,7 +54,8 @@ import { useForm } from "react-hook-form";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 import {
-  addMember,
+  changeInitialPassword,
+  createStaff,
   apiOrigin,
   contactConversations,
   conversationAction,
@@ -132,6 +133,7 @@ import { formatDate, formatPhone, formatTime } from "./format";
 import { loadFacebookSdk, launchEmbeddedSignup } from "./facebookSignup";
 import { CatalogPage, SalesPage, FinancePage, CommercialSettings, CommercialSummary } from "./Commercial";
 import { LandingPage, SignupPage, CheckoutStatusPage, VerifyEmailPage, AddCompanyPage, ExtraNumberPurchase } from "./Billing";
+import { TeamInviteAcceptPage } from "./TeamInvite";
 
 const AppContext = createContext<{
   session: Session;
@@ -284,7 +286,7 @@ function LoginPage() {
       queryClient.clear();
       queryClient.setQueryData(queryKeys.session, session);
       localStorage.removeItem("gest-tech-company");
-      navigate(session.companies.length === 1 ? "/dashboard" : "/select-company");
+      navigate(session.user.must_change_password ? "/change-password" : session.companies.length === 1 ? "/dashboard" : "/select-company");
     },
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
@@ -330,6 +332,25 @@ function LoginPage() {
   );
 }
 
+function InitialPasswordPage({ session }: { session: Session }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [formError, setFormError] = useState("");
+  const change = useMutation({
+    mutationFn: () => changeInitialPassword(current, next),
+    onSuccess: (user) => {
+      queryClient.setQueryData(queryKeys.session, { ...session, user });
+      navigate(session.companies.length === 1 ? "/dashboard" : "/select-company", { replace: true });
+    },
+    onError: (error: unknown) => setFormError(errorMessage(error)),
+  });
+  const leave = useMutation({ mutationFn: logout, onSuccess: () => { queryClient.clear(); navigate("/login", { replace: true }); } });
+  return <main className="login-page"><div className="login-art"><div className="brand brand-large"><span className="brand-mark"><MessageCircle size={22} /></span>gest<span>tech</span></div><div className="login-art-copy"><h1>Seu acesso começa aqui.</h1><p>Defina uma senha pessoal antes de acessar as empresas da sua equipe.</p></div></div><div className="login-form-side"><div className="login-form-wrap"><span className="eyebrow">PRIMEIRO ACESSO</span><h2>Troque sua senha</h2><p className="form-intro">A senha inicial foi definida pelo administrador. Escolha uma nova senha para sua conta.</p><form className="stack-form" onSubmit={(event) => { event.preventDefault(); setFormError(""); if (next !== confirmation) { setFormError("As novas senhas não coincidem."); return; } change.mutate(); }}><label>Senha inicial<input type="password" autoComplete="current-password" required value={current} onChange={(event) => setCurrent(event.target.value)} /></label><label>Nova senha<input type="password" autoComplete="new-password" minLength={8} required value={next} onChange={(event) => setNext(event.target.value)} /></label><label>Confirme a nova senha<input type="password" autoComplete="new-password" minLength={8} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>{formError && <div className="inline-error" role="alert">{formError}</div>}<button className="button button-primary button-wide" disabled={change.isPending}>{change.isPending ? "Salvando…" : "Salvar nova senha"}</button></form><button className="button button-secondary button-wide staff-leave" type="button" disabled={leave.isPending} onClick={() => leave.mutate()}>Sair</button></div></div></main>;
+}
+
 function CompanyPicker() {
   const { selectCompany } = useApp();
   const navigate = useNavigate();
@@ -355,7 +376,7 @@ function CompanyPicker() {
             ))}
           </div>
         ) : (
-          <Empty icon={Building2} title="Nenhuma empresa disponível" text="Peça ao administrador da sua empresa para adicionar seu usuário à equipe." />
+          <Empty icon={Building2} title="Nenhuma empresa ativa" text="Peça ao administrador para conferir seu acesso e verificar se a assinatura da empresa está ativa." />
         )}
       </div>
     </main>
@@ -1212,7 +1233,7 @@ function NumbersPage() {
     else if (editingId !== null) update.mutate({ id: editingId, input: cleanValues });
   };
   return <div className="page-stack"><PageTitle eyebrow="CANAIS DE ATENDIMENTO" title="Números do WhatsApp" description={canManage ? "Conecte um número pela Meta. Números elegíveis podem continuar no WhatsApp Business." : "Consulte os números cadastrados para esta empresa."} action={canManage && <><button className="button button-primary" disabled={connect.isPending || !sdkReady || !signupConfig.data || !migrationConsent} onClick={startConnection}><Smartphone size={16} /> {connect.isPending ? "Conectando…" : "Conectar WhatsApp"}</button><button className="button button-secondary" onClick={openCreate}><Plus size={16} /> Cadastro manual</button></>} />{companyId && <ExtraNumberPurchase companyId={companyId} />}
-    <div className="settings-note"><CircleHelp size={16} /><span>A Meta oferece conexão normal ou coexistência para números elegíveis. A coexistência mantém o aplicativo, mas alguns recursos e aparelhos vinculados podem mudar. A conexão normal de um número usado no WhatsApp Business pode impedir seu uso no aplicativo. O Gest Tech não inicia uma migração por API.<br /><label><input type="checkbox" checked={migrationConsent} onChange={(event) => setMigrationConsent(event.target.checked)} /> Entendi os riscos e autorizo a opção que eu selecionar na Meta, inclusive a possível migração se escolher conexão normal.</label></span></div>
+    <div className="whatsapp-consent-card"><div className="whatsapp-consent-info"><CircleHelp size={20} /><p>A Meta oferece conexão normal ou coexistência para números elegíveis. A coexistência mantém o aplicativo, mas alguns recursos e aparelhos vinculados podem mudar. A conexão normal de um número usado no WhatsApp Business pode impedir seu uso no aplicativo. O Gest Tech não inicia uma migração por API.</p></div><label className="whatsapp-consent-check"><input type="checkbox" checked={migrationConsent} onChange={(event) => setMigrationConsent(event.target.checked)} /><span>Entendi os riscos e autorizo a opção que eu selecionar na Meta, inclusive a possível migração se escolher conexão normal.</span></label></div>
     {signupConfig.isError && canManage && <ErrorNotice error={signupConfig.error} retry={() => void signupConfig.refetch()} />}
     {formError && !createOpen && editingId === null && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     {query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data.results.length ? <>
@@ -1248,28 +1269,35 @@ function Toggle({ label, description, checked, disabled, onChange }: { label: st
 }
 
 function TeamPage() {
-  const { company } = useApp();
+  const { company, session } = useApp();
   const companyId = company?.id ?? "";
-  const [identifier, setIdentifier] = useState("");
+  const manageableCompanies = session.companies.filter((item) => roleCanManage(item.role));
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [companyIds, setCompanyIds] = useState<string[]>([companyId]);
+  useEffect(() => setCompanyIds([companyId]), [companyId]);
   const [role, setRole] = useState<"admin" | "agent">("agent");
   const [formError, setFormError] = useState("");
+  const [formSuccess, setFormSuccess] = useState("");
   const query = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
   const queryClient = useQueryClient();
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: queryKeys.members(companyId) });
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["members"] });
   const add = useMutation({
-    mutationFn: () => {
-      const value = identifier.trim();
-      return addMember(companyId, value.includes("@") ? { email: value, role } : { username: value, role });
-    },
-    onSuccess: () => { setIdentifier(""); setFormError(""); invalidate(); },
-    onError: (error: unknown) => setFormError(errorMessage(error)),
+    mutationFn: () => createStaff({ username: username.trim(), password, email: email.trim() || undefined, role, company_ids: companyIds }),
+    onSuccess: () => { setUsername(""); setPassword(""); setEmail(""); setFormError(""); setFormSuccess("Funcionário cadastrado. A troca de senha será exigida no primeiro acesso." + (email.trim() ? " O envio da notificação por e-mail foi solicitado." : " Entregue o usuário e a senha inicial à pessoa cadastrada.")); invalidate(); },
+    onError: (error: unknown) => { setFormSuccess(""); setFormError(errorMessage(error)); },
   });
   const changeRole = useMutation({ mutationFn: ({ member, next }: { member: Membership; next: string }) => updateMember(companyId, member.id, next), onSuccess: invalidate, onError: (error: unknown) => setFormError(errorMessage(error)) });
   const remove = useMutation({ mutationFn: (memberId: number) => removeMember(companyId, memberId), onSuccess: invalidate, onError: (error: unknown) => setFormError(errorMessage(error)) });
-  return <div className="page-stack"><PageTitle eyebrow="PESSOAS E ACESSOS" title="Equipe" description="Convide pessoas que já possuem conta no sistema e defina o nível de acesso da equipe." />
+  return <div className="page-stack"><PageTitle eyebrow="PESSOAS E ACESSOS" title="Equipe" description="Cadastre funcionários e escolha os negócios que cada pessoa pode acessar." />
     {formError && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
-    <section className="panel team-invite"><span className="invite-icon"><Users size={19} /></span><div className="invite-copy"><strong>Adicionar membro</strong><small>Use o usuário ou e-mail de uma conta existente.</small></div><form className="invite-form" onSubmit={(event) => { event.preventDefault(); if (identifier.trim()) add.mutate(); }}><input aria-label="Usuário ou e-mail existente" placeholder="Usuário ou e-mail" value={identifier} onChange={(event) => setIdentifier(event.target.value)} /><select aria-label="Papel do novo membro" value={role} onChange={(event) => setRole(event.target.value as "admin" | "agent")}><option value="agent">Atendente</option><option value="admin">Administrador</option></select><button className="button button-primary" disabled={!identifier.trim() || add.isPending}><Plus size={16} /> {add.isPending ? "Adicionando…" : "Adicionar"}</button></form></section>
-    <section className="panel table-panel"><div className="table-toolbar"><div><strong>Membros da empresa</strong><small>{query.data?.length ?? 0} pessoas com acesso</small></div></div>{query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data?.length ? <div className="table-scroll"><table><thead><tr><th>MEMBRO</th><th>USUÁRIO</th><th>E-MAIL</th><th>PAPEL</th><th>PERMISSÕES</th><th /></tr></thead><tbody>{query.data.map((member) => <tr key={member.id}><td><span className="table-person static-person"><span className="contact-avatar">{displayName(member.user).slice(0, 1).toUpperCase()}</span><strong>{displayName(member.user)}</strong></span></td><td className="subtle-cell">{member.user.username}</td><td className="subtle-cell">{member.user.email || "—"}</td><td>{member.role === "owner" ? <Badge tone="brand">Proprietário</Badge> : <select aria-label={`Papel de ${member.user.username}`} className="role-select" disabled={changeRole.isPending} value={member.role} onChange={(event) => changeRole.mutate({ member, next: event.target.value })}><option value="admin">Administrador</option><option value="agent">Atendente</option></select>}</td><td><small>{member.role === "agent" ? "Atendimento e contatos" : "Operação, equipe e configurações"}</small></td><td>{member.role !== "owner" && <button className="icon-button danger-icon" aria-label={`Remover ${member.user.username}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Remover ${displayName(member.user)} da equipe?`)) remove.mutate(member.id); }}><X size={16} /></button>}</td></tr>)}</tbody></table></div> : <Empty icon={Users} title="Sua equipe começa aqui" text="Adicione um usuário existente para compartilhar o atendimento." />}</section>
+    {formSuccess && <div className="team-success" role="status">{formSuccess}</div>}
+    <section className="panel team-invite"><span className="invite-icon"><Users size={19} /></span><div className="invite-copy"><strong>Adicionar funcionário</strong><small>Defina usuário, senha inicial e empresas. O e-mail é opcional e serve para notificar a pessoa.</small></div><form className="invite-form staff-form" onSubmit={(event) => { event.preventDefault(); if (username.trim() && password && companyIds.length) add.mutate(); }}>
+      <div className="staff-fields"><label>Usuário<input aria-label="Usuário do funcionário" autoComplete="off" required maxLength={150} value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Senha inicial<input aria-label="Senha inicial" type="password" autoComplete="new-password" required minLength={4} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>E-mail (opcional)<input aria-label="E-mail do funcionário" type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} /></label><label>Papel<select aria-label="Papel do novo membro" value={role} onChange={(event) => setRole(event.target.value as "admin" | "agent")}><option value="agent">Atendente</option><option value="admin">Administrador</option></select></label></div>
+      <fieldset className="staff-companies"><legend>Negócios com acesso</legend>{manageableCompanies.map((item) => <label key={item.id}><input type="checkbox" checked={companyIds.includes(item.id)} onChange={(event) => setCompanyIds((previous) => event.target.checked ? [...previous, item.id] : previous.filter((id) => id !== item.id))} /> {item.name}</label>)}</fieldset>
+      <button className="button button-primary" disabled={!username.trim() || password.length < 4 || !companyIds.length || add.isPending}><Plus size={16} /> {add.isPending ? "Cadastrando…" : "Adicionar funcionário"}</button></form></section>
+    <section className="panel table-panel"><div className="table-toolbar"><div><strong>Membros da empresa</strong><small>{query.data?.length ?? 0} pessoas com acesso</small></div></div>{query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data?.length ? <div className="table-scroll"><table><thead><tr><th>MEMBRO</th><th>USUÁRIO</th><th>E-MAIL</th><th>PAPEL</th><th>PERMISSÕES</th><th /></tr></thead><tbody>{query.data.map((member) => <tr key={member.id}><td><span className="table-person static-person"><span className="contact-avatar">{displayName(member.user).slice(0, 1).toUpperCase()}</span><strong>{displayName(member.user)}</strong></span></td><td className="subtle-cell">{member.user.username}</td><td className="subtle-cell">{member.user.email || "—"}</td><td>{member.role === "owner" ? <Badge tone="brand">Proprietário</Badge> : <select aria-label={`Papel de ${member.user.username}`} className="role-select" disabled={changeRole.isPending} value={member.role} onChange={(event) => changeRole.mutate({ member, next: event.target.value })}><option value="admin">Administrador</option><option value="agent">Atendente</option></select>}</td><td><small>{member.role === "agent" ? "Atendimento e contatos" : "Operação, equipe e configurações"}</small></td><td>{member.role !== "owner" && <button className="icon-button danger-icon" aria-label={`Remover ${member.user.username}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Remover ${displayName(member.user)} da equipe?`)) remove.mutate(member.id); }}><X size={16} /></button>}</td></tr>)}</tbody></table></div> : <Empty icon={Users} title="Sua equipe começa aqui" text="Cadastre um funcionário para compartilhar o atendimento." />}</section>
   </div>;
 }
 
@@ -1425,7 +1453,7 @@ export default function App() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const cachedSession = queryClient.getQueryData<Session>(queryKeys.session);
-  const publicPage = ["/", "/signup", "/checkout/status", "/verify-email"].includes(location.pathname);
+  const publicPage = ["/", "/signup", "/checkout/status", "/verify-email", "/invite/accept"].includes(location.pathname);
   const shouldCheckSession = !publicPage && (location.pathname !== "/login" || !!cachedSession);
   useEffect(() => {
     const onExpired = () => {
@@ -1443,13 +1471,14 @@ export default function App() {
     enabled: shouldCheckSession,
     staleTime: 5 * 60 * 1000,
   });
-  if (publicPage) return <Routes><Route path="/" element={<LandingPage />} /><Route path="/signup" element={<SignupPage />} /><Route path="/checkout/status" element={<CheckoutStatusPage />} /><Route path="/verify-email" element={<VerifyEmailPage />} /></Routes>;
+  if (publicPage) return <Routes><Route path="/" element={<LandingPage />} /><Route path="/signup" element={<SignupPage />} /><Route path="/checkout/status" element={<CheckoutStatusPage />} /><Route path="/verify-email" element={<VerifyEmailPage />} /><Route path="/invite/accept" element={<TeamInviteAcceptPage />} /></Routes>;
   if (location.pathname === "/login" && !sessionQuery.data) return <LoginPage />;
   if (sessionQuery.isPending) return <div className="full-loading"><Loading label="Preparando seu espaço…" /></div>;
   if (sessionQuery.isError && !isSessionExpiredError(sessionQuery.error)) {
     return <div className="full-loading"><ErrorNotice error={sessionQuery.error} retry={() => void sessionQuery.refetch()} /></div>;
   }
   if (!sessionQuery.data) return <Routes><Route path="*" element={<Navigate to="/login" replace />} /></Routes>;
+  if (sessionQuery.data.user.must_change_password) return <InitialPasswordPage session={sessionQuery.data} />;
   return <Routes><Route path="/login" element={<Navigate to="/dashboard" replace />} /><Route path="*" element={<ProtectedApp session={sessionQuery.data} />} /></Routes>;
 }
 
