@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import * as api from "./api";
-import type { Company, Dashboard, Session } from "./types";
+import type { Company, Dashboard, Message, Session } from "./types";
 
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
@@ -78,15 +78,18 @@ const dashboard: Dashboard = {
 function renderApp(path: string) {
   window.history.replaceState({}, "", path);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <BrowserRouter><App /></BrowserRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <BrowserRouter><App /></BrowserRouter>
+      </QueryClientProvider>,
+    ),
+    client,
+  };
 }
 
 describe("Gest Tech protected app", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -268,6 +271,10 @@ describe("Gest Tech protected app", () => {
   });
 
   it("loads older chronological messages without replacing the latest page", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("message-list") ? 500 + Math.max(0, this.querySelectorAll(".message-row").length - 1) * 100 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
     vi.mocked(api.listConversations).mockResolvedValue({
       count: 1,
       next: null,
@@ -322,11 +329,56 @@ describe("Gest Tech protected app", () => {
       });
     renderApp("/inbox");
 
-    expect(await screen.findByText("Mensagem mais recente")).toBeInTheDocument();
+    const list = (await screen.findByText("Mensagem mais recente")).closest(".message-list") as HTMLDivElement;
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
     fireEvent.click(screen.getByRole("button", { name: /Carregar mensagens anteriores/ }));
 
     expect(await screen.findByText("Mensagem antiga")).toBeInTheDocument();
     expect(screen.getByText("Mensagem mais recente")).toBeInTheDocument();
+    await waitFor(() => expect(list.scrollTop).toBe(200));
+  });
+
+  it("opens chats at the newest message and follows updates only near the bottom", async () => {
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(500);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+    try {
+      const conversation = await api.getConversation(company.id, 7);
+      vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+      const latest: Message = {
+        id: 51, external_id: "wamid-latest", direction: "in", message_type: "text",
+        text: "Mensagem recente", status: "received", ai_status: "skipped", response_to: null,
+        created_at: "2026-01-01T12:05:00Z",
+      };
+      vi.mocked(api.listMessages).mockResolvedValue({ count: 1, next: null, previous: null, results: [latest] });
+      const { client } = renderApp("/inbox");
+      const list = (await screen.findByText("Mensagem recente")).closest(".message-list") as HTMLDivElement;
+      await waitFor(() => expect(list.scrollTop).toBe(500));
+
+      list.scrollTop = 100;
+      fireEvent.scroll(list);
+      vi.mocked(api.listMessages).mockResolvedValue({
+        count: 2, next: null, previous: null,
+        results: [latest, { ...latest, id: 52, external_id: "wamid-new", text: "Mensagem nova" }],
+      });
+      await act(async () => { await client.invalidateQueries({ queryKey: ["messages", company.id, 7] }); });
+      expect(await screen.findByText("Mensagem nova")).toBeInTheDocument();
+      expect(list.scrollTop).toBe(100);
+
+      list.scrollTop = 400;
+      fireEvent.scroll(list);
+      vi.mocked(api.listMessages).mockResolvedValue({
+        count: 3, next: null, previous: null,
+        results: [latest, { ...latest, id: 52, external_id: "wamid-new", text: "Mensagem nova" },
+          { ...latest, id: 53, external_id: "wamid-next", text: "Outra mensagem" }],
+      });
+      await act(async () => { await client.invalidateQueries({ queryKey: ["messages", company.id, 7] }); });
+      expect(await screen.findByText("Outra mensagem")).toBeInTheDocument();
+      expect(list.scrollTop).toBe(500);
+    } finally {
+      scrollHeight.mockRestore();
+      clientHeight.mockRestore();
+    }
   });
 
   it("submits credentials and opens the authenticated dashboard", async () => {

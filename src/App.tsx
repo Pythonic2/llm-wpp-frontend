@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -543,6 +544,10 @@ function InboxPage() {
   const requestedId = Number(searchParams.get("conversation")) || null;
   const [selectedId, setSelectedId] = useState<number | null>(requestedId);
   const initialSelection = useRef(false);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
+  const scrollConversationIdRef = useRef<number | null>(null);
+  const olderMessagesAnchorRef = useRef<{ top: number; height: number } | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [human, setHuman] = useState("");
@@ -584,6 +589,28 @@ function InboxPage() {
     enabled: !!selectedId && !!companyId,
     refetchInterval: 5_000,
   });
+  useLayoutEffect(() => {
+    const element = messageListRef.current;
+    if (!element) return;
+    if (scrollConversationIdRef.current !== selectedId) {
+      scrollConversationIdRef.current = selectedId;
+      followLatestRef.current = true;
+      olderMessagesAnchorRef.current = null;
+    }
+    if (olderMessagesAnchorRef.current) {
+      if (messageQuery.isFetchingPreviousPage) return;
+      const { top, height } = olderMessagesAnchorRef.current;
+      element.scrollTop = top + element.scrollHeight - height;
+      olderMessagesAnchorRef.current = null;
+    } else if (followLatestRef.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [selectedId, messageQuery.data, messageQuery.isFetchingPreviousPage]);
+  const loadOlderMessages = () => {
+    const element = messageListRef.current;
+    if (element) olderMessagesAnchorRef.current = { top: element.scrollTop, height: element.scrollHeight };
+    void messageQuery.fetchPreviousPage();
+  };
   const queryClient = useQueryClient();
   const refreshConversation = () => {
     void queryClient.invalidateQueries({ queryKey: ["conversations", companyId] });
@@ -605,7 +632,7 @@ function InboxPage() {
   });
   const send = useMutation({
     mutationFn: (text: string) => sendMessage(companyId, selectedId ?? 0, text),
-    onSuccess: () => { setMessage(""); refreshConversation(); },
+    onSuccess: () => { setMessage(""); followLatestRef.current = true; refreshConversation(); },
     onError: () => refreshConversation(),
   });
   const members = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
@@ -667,9 +694,12 @@ function InboxPage() {
           {actionError && <div className="chat-error" role="alert">{actionError}<button onClick={() => setActionError("")} aria-label="Fechar"><X size={14} /></button></div>}
           {conversationDetail.isError && <ErrorNotice error={conversationDetail.error} retry={() => void conversationDetail.refetch()} />}
           <div className="chat-context-strip"><span><Smartphone size={14} /> Conversa #{selected.id}</span><span>Atualizada {formatTime(selected.last_message_at)}</span></div>
-          <div className="message-list">
+          <div className="message-list" ref={messageListRef} onScroll={(event) => {
+            const element = event.currentTarget;
+            followLatestRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+          }}>
             {messageQuery.isPending ? <Loading label="Carregando mensagens…" /> : messageQuery.isError ? <ErrorNotice error={messageQuery.error} retry={() => void messageQuery.refetch()} /> : <>
-              {messageQuery.hasPreviousPage && <button className="load-older" disabled={messageQuery.isFetchingPreviousPage} onClick={() => void messageQuery.fetchPreviousPage()}>{messageQuery.isFetchingPreviousPage ? <LoaderCircle className="spin" size={14} /> : <Clock3 size={14} />} Carregar mensagens anteriores</button>}
+              {messageQuery.hasPreviousPage && <button className="load-older" disabled={messageQuery.isFetchingPreviousPage} onClick={loadOlderMessages}>{messageQuery.isFetchingPreviousPage ? <LoaderCircle className="spin" size={14} /> : <Clock3 size={14} />} Carregar mensagens anteriores</button>}
               {(messageQuery.data?.pages.flatMap((page) => page.results) ?? []).map((item) => <MessageBubble key={item.id} message={item} />)}
               {!messageQuery.data?.pages.some((page) => page.results.length) && <div className="chat-empty">As mensagens desta conversa aparecerão aqui.</div>}
             </>}
