@@ -43,7 +43,7 @@ jobs:
           platforms: linux/arm64
           build-args: |
             APP_COMMIT_SHA=${{ github.sha }}
-            VITE_BILLING_SANDBOX=true
+            VITE_BILLING_SANDBOX=false
           tags: |
             ghcr.io/pythonic2/llm-wpp-frontend:sha-${{ github.sha }}
             ghcr.io/pythonic2/llm-wpp-frontend:main
