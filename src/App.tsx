@@ -48,7 +48,7 @@ import {
   Target,
   ShoppingCart,
   UploadCloud,
-  Users,
+  Users, UserX,
   X,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -721,16 +721,16 @@ function InboxPage() {
 function MessageBubble({ message }: { message: Message }) {
   const outgoing = message.direction === "out";
   const aiLabel: Record<Message["ai_status"], string> = { na: "", queued: "IA na fila", processing: "IA processando", completed: "Respondida pela IA", skipped: "IA ignorada", failed: "Falha na IA" };
-  return <div className={`message-row ${outgoing ? "message-outgoing" : ""}`}><div className={`message-bubble ${outgoing ? "bubble-outgoing" : "bubble-incoming"}`}><p>{message.text || <em>Mensagem {message.message_type} não textual</em>}</p>{message.source_media_id && <MessageAttachment message={message} />}<span className="message-meta">{formatTime(message.created_at)}<MessageStatus status={message.status} />{!outgoing && aiLabel[message.ai_status] && <small className="ai-message-label">{aiLabel[message.ai_status]}</small>}</span></div></div>;
+  return <div className={`message-row ${outgoing ? "message-outgoing" : ""}`}><div className={`message-bubble ${outgoing ? "bubble-outgoing" : "bubble-incoming"}`}><p>{message.text || <em>Mensagem {message.message_type} não textual</em>}</p>{message.source_media_id && <MessageAttachment message={message} />}<span className="message-meta">{formatTime(message.sent_at || message.created_at)}<MessageStatus status={message.status} />{!outgoing && aiLabel[message.ai_status] && <small className="ai-message-label">{aiLabel[message.ai_status]}</small>}</span></div></div>;
 }
 
 function MessageAttachment({ message }: { message: Message }) {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const attachmentFailed = !!message.attachment_error && message.attachment_error !== "processing";
-  if (!message.attachment_url) return <span className={`message-attachment-pending ${attachmentFailed ? "message-attachment-error" : ""}`}>{attachmentFailed ? "Não foi possível salvar o anexo" : "Preparando anexo para download…"}</span>;
+  if (!message.attachment_url) return <span className={`message-attachment-pending ${attachmentFailed ? "message-attachment-error" : ""}`}>{attachmentFailed ? "Anexo indisponível" : "Preparando anexo para download…"}</span>;
   const attachmentUrl = message.attachment_url;
-  const attachmentName = message.attachment_name || "anexo";
+  const attachmentName = message.attachment_name || (message.message_type === "image" ? "foto.jpg" : message.message_type === "video" ? "video.mp4" : "anexo");
   return <button className="message-attachment" disabled={downloading} onClick={() => {
     setDownloading(true); setError("");
     void downloadMessageAttachment(attachmentUrl, attachmentName).catch((downloadError: unknown) => setError(errorMessage(downloadError))).finally(() => setDownloading(false));
@@ -1310,6 +1310,8 @@ function TeamPage() {
   const [role, setRole] = useState<"admin" | "agent">("agent");
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState<Membership | null>(null);
+  const [removeError, setRemoveError] = useState("");
   const query = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
   const queryClient = useQueryClient();
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["members"] });
@@ -1319,7 +1321,7 @@ function TeamPage() {
     onError: (error: unknown) => { setFormSuccess(""); setFormError(errorMessage(error)); },
   });
   const changeRole = useMutation({ mutationFn: ({ member, next }: { member: Membership; next: string }) => updateMember(companyId, member.id, next), onSuccess: invalidate, onError: (error: unknown) => setFormError(errorMessage(error)) });
-  const remove = useMutation({ mutationFn: (memberId: number) => removeMember(companyId, memberId), onSuccess: invalidate, onError: (error: unknown) => setFormError(errorMessage(error)) });
+  const remove = useMutation({ mutationFn: (memberId: number) => removeMember(companyId, memberId), onSuccess: () => { setPendingRemoval(null); setRemoveError(""); invalidate(); }, onError: (error: unknown) => setRemoveError(errorMessage(error)) });
   return <div className="page-stack"><PageTitle eyebrow="PESSOAS E ACESSOS" title="Equipe" description="Cadastre funcionários e escolha os negócios que cada pessoa pode acessar." />
     {formError && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     {formSuccess && <div className="team-success" role="status">{formSuccess}</div>}
@@ -1327,7 +1329,8 @@ function TeamPage() {
       <div className="staff-fields"><label>Usuário<input aria-label="Usuário do funcionário" autoComplete="off" required maxLength={150} value={username} onChange={(event) => setUsername(event.target.value)} /></label><label>Senha inicial<input aria-label="Senha inicial" type="password" autoComplete="new-password" required minLength={4} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>E-mail (opcional)<input aria-label="E-mail do funcionário" type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} /></label><label>Papel<select aria-label="Papel do novo membro" value={role} onChange={(event) => setRole(event.target.value as "admin" | "agent")}><option value="agent">Atendente</option><option value="admin">Administrador</option></select></label></div>
       <fieldset className="staff-companies"><legend>Negócios com acesso</legend>{manageableCompanies.map((item) => <label key={item.id}><input type="checkbox" checked={companyIds.includes(item.id)} onChange={(event) => setCompanyIds((previous) => event.target.checked ? [...previous, item.id] : previous.filter((id) => id !== item.id))} /> {item.name}</label>)}</fieldset>
       <button className="button button-primary" disabled={!username.trim() || password.length < 4 || !companyIds.length || add.isPending}><Plus size={16} /> {add.isPending ? "Cadastrando…" : "Adicionar funcionário"}</button></form></section>
-    <section className="panel table-panel"><div className="table-toolbar"><div><strong>Membros da empresa</strong><small>{query.data?.length ?? 0} pessoas com acesso</small></div></div>{query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data?.length ? <div className="table-scroll"><table><thead><tr><th>MEMBRO</th><th>USUÁRIO</th><th>E-MAIL</th><th>PAPEL</th><th>PERMISSÕES</th><th /></tr></thead><tbody>{query.data.map((member) => <tr key={member.id}><td><span className="table-person static-person"><span className="contact-avatar">{displayName(member.user).slice(0, 1).toUpperCase()}</span><strong>{displayName(member.user)}</strong></span></td><td className="subtle-cell">{member.user.username}</td><td className="subtle-cell">{member.user.email || "—"}</td><td>{member.role === "owner" ? <Badge tone="brand">Proprietário</Badge> : <select aria-label={`Papel de ${member.user.username}`} className="role-select" disabled={changeRole.isPending} value={member.role} onChange={(event) => changeRole.mutate({ member, next: event.target.value })}><option value="admin">Administrador</option><option value="agent">Atendente</option></select>}</td><td><small>{member.role === "agent" ? "Atendimento e contatos" : "Operação, equipe e configurações"}</small></td><td>{member.role !== "owner" && <button className="icon-button danger-icon" aria-label={`Remover ${member.user.username}`} disabled={remove.isPending} onClick={() => { if (window.confirm(`Remover ${displayName(member.user)} da equipe?`)) remove.mutate(member.id); }}><X size={16} /></button>}</td></tr>)}</tbody></table></div> : <Empty icon={Users} title="Sua equipe começa aqui" text="Cadastre um funcionário para compartilhar o atendimento." />}</section>
+    <section className="panel table-panel"><div className="table-toolbar"><div><strong>Membros da empresa</strong><small>{query.data?.length ?? 0} pessoas com acesso</small></div></div>{query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data?.length ? <div className="table-scroll"><table><thead><tr><th>MEMBRO</th><th>USUÁRIO</th><th>E-MAIL</th><th>PAPEL</th><th>PERMISSÕES</th><th /></tr></thead><tbody>{query.data.map((member) => <tr key={member.id}><td><span className="table-person static-person"><span className="contact-avatar">{displayName(member.user).slice(0, 1).toUpperCase()}</span><strong>{displayName(member.user)}</strong></span></td><td className="subtle-cell">{member.user.username}</td><td className="subtle-cell">{member.user.email || "—"}</td><td>{member.role === "owner" ? <Badge tone="brand">Proprietário</Badge> : <select aria-label={`Papel de ${member.user.username}`} className="role-select" disabled={changeRole.isPending} value={member.role} onChange={(event) => changeRole.mutate({ member, next: event.target.value })}><option value="admin">Administrador</option><option value="agent">Atendente</option></select>}</td><td><small>{member.role === "agent" ? "Atendimento e contatos" : "Operação, equipe e configurações"}</small></td><td>{member.role !== "owner" && <button className="icon-button danger-icon" aria-label={`Remover ${member.user.username}`} disabled={remove.isPending} onClick={() => { setPendingRemoval(member); setRemoveError(""); }}><X size={16} /></button>}</td></tr>)}</tbody></table></div> : <Empty icon={Users} title="Sua equipe começa aqui" text="Cadastre um funcionário para compartilhar o atendimento." />}</section>
+    {pendingRemoval && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !remove.isPending) setPendingRemoval(null); }}><section className="modal-card team-remove-modal" role="dialog" aria-modal="true" aria-labelledby="team-remove-title" onKeyDown={(event) => { if (event.key === "Escape" && !remove.isPending) setPendingRemoval(null); }}><div className="team-remove-icon"><UserX size={23} /></div><span className="eyebrow">ACESSO À EMPRESA</span><h2 id="team-remove-title">Remover da equipe?</h2><p><strong>{displayName(pendingRemoval.user)}</strong> perderá o acesso a esta empresa. O cadastro da pessoa e os acessos a outros negócios serão preservados.</p>{removeError && <div className="inline-error" role="alert">{removeError}</div>}<div className="modal-actions"><button type="button" className="button button-secondary" autoFocus disabled={remove.isPending} onClick={() => setPendingRemoval(null)}>Cancelar</button><button type="button" className="button button-danger" disabled={remove.isPending} onClick={() => remove.mutate(pendingRemoval.id)}>{remove.isPending ? "Removendo…" : "Remover acesso"}</button></div></section></div>}
   </div>;
 }
 

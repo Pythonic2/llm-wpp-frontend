@@ -192,7 +192,10 @@ export async function listMessages(companyId: string, conversationId: number, pa
 }
 
 export async function downloadMessageAttachment(url: string, filename: string): Promise<void> {
-  const { data } = await http.get<Blob>(url, { responseType: "blob", timeout: 60_000 });
+  // The API returns a root-relative route. Axios would otherwise prepend /api/v1 twice.
+  const parsed = new URL(url, `${apiOrigin}/`);
+  const resolvedUrl = new URL(`${parsed.pathname}${parsed.search}`, `${apiOrigin}/`).toString();
+  const { data } = await http.get<Blob>(resolvedUrl, { responseType: "blob", timeout: 60_000 });
   const objectUrl = URL.createObjectURL(data);
   const link = document.createElement("a");
   link.href = objectUrl;
@@ -200,7 +203,7 @@ export async function downloadMessageAttachment(url: string, filename: string): 
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(objectUrl);
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 function idempotencyKey(): string {

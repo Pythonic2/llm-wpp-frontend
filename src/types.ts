@@ -91,6 +91,7 @@ export interface Message {
   ai_status: "na" | "queued" | "processing" | "completed" | "skipped" | "failed";
   response_to: number | null;
   created_at: string;
+  sent_at?: string | null;
 }
 
 export interface Dashboard {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./api";
 import type { Session, User } from "./types";
 
@@ -129,6 +129,24 @@ describe("media API contract", () => {
 
     await expect(api.getMediaAssetBlob("/media/company/photo.png")).resolves.toBe(mediaBlob);
     expect(requestedUrl).toBe(`${api.apiOrigin}/media/company/photo.png`);
+  });
+
+  it("downloads a message attachment from a root-relative API route", async () => {
+    let requestedUrl = "";
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:message-test");
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    api.http.defaults.adapter = async (config) => {
+      requestedUrl = config.url ?? "";
+      return { config, data: new Blob(["video"]), status: 200, statusText: "OK", headers: {} };
+    };
+    try {
+      await api.downloadMessageAttachment("/api/v1/companies/one/conversations/2/messages/3/attachment/", "video.mp4");
+      expect(requestedUrl).toBe(`${api.apiOrigin}/api/v1/companies/one/conversations/2/messages/3/attachment/`);
+      expect(click).toHaveBeenCalledOnce();
+    } finally {
+      createObjectURL.mockRestore();
+      click.mockRestore();
+    }
   });
 
   it("replaces an internal backend origin with the configured API origin", async () => {

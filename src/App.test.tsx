@@ -32,6 +32,7 @@ vi.mock("./api", async () => {
     updateConversation: vi.fn(),
     sendMessage: vi.fn(),
     listMembers: vi.fn(),
+    removeMember: vi.fn(),
     listNumbers: vi.fn(),
     getNumber: vi.fn(),
     createNumber: vi.fn(),
@@ -254,6 +255,22 @@ describe("Gest Tech protected app", () => {
       company_ids: [company.id, second.id],
     }));
     expect(await screen.findByText(/Funcionário cadastrado/)).toBeInTheDocument();
+  });
+
+  it("confirms team removal in a modal and cancels without changing access", async () => {
+    vi.mocked(api.listMembers).mockResolvedValue([
+      { id: 17, user: { id: 17, username: "nelso", email: "", first_name: "", last_name: "" }, role: "agent" },
+    ]);
+    vi.mocked(api.removeMember).mockResolvedValue();
+    renderApp("/team");
+    fireEvent.click(await screen.findByRole("button", { name: "Remover nelso" }));
+    expect(screen.getByRole("dialog", { name: "Remover da equipe?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(api.removeMember).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remover nelso" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remover acesso" }));
+    await waitFor(() => expect(api.removeMember).toHaveBeenCalledWith(company.id, 17));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remover da equipe?" })).not.toBeInTheDocument());
   });
 
   it("requires the first password change before showing CRM data", async () => {
