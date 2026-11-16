@@ -22,6 +22,8 @@ vi.mock("./api", async () => {
     listContacts: vi.fn(),
     getContact: vi.fn(),
     createContact: vi.fn(),
+    setContactFollowUpConsent: vi.fn(),
+    updateWarmFollowUpEnabled: vi.fn(),
     updateContact: vi.fn(),
     deleteContact: vi.fn(),
     contactConversations: vi.fn(),
@@ -228,6 +230,39 @@ describe("Gest Tech protected app", () => {
     expect(screen.getByText("Olá, Ana 👋")).toBeInTheDocument();
   });
 
+  it("shows how many people received an automatic follow-up today", async () => {
+    vi.mocked(api.getDashboard).mockResolvedValue({
+      ...dashboard, warm_follow_up_enabled: true, warm_follow_up_contacts_today: 2,
+      warm_follow_up_delivered_today: 1, warm_follow_up_failed_today: 0,
+      warm_follow_up_attempts: [{ id: 1, conversation_id: 7, contact_name: "Maria", status: "delivered", created_at: "2026-11-16T15:00:00Z" }],
+    });
+    renderApp("/dashboard");
+    expect(await screen.findByRole("heading", { name: "A IA entrou em contato com 2 pessoas hoje" })).toBeInTheDocument();
+    expect(screen.getByText("Maria")).toBeInTheDocument();
+    expect(screen.getByText(/1 entregues/)).toBeInTheDocument();
+  });
+
+  it("lets an administrator enable follow-up and record a contact's consent", async () => {
+    const contact = { id: 8, name: "Maria", phone: "5511999999999", wa_id: "5511999999999",
+      created_at: "2026-01-01T12:00:00Z", updated_at: "2026-01-01T12:00:00Z" };
+    vi.mocked(api.getCompany).mockResolvedValue({ ...company, warm_follow_up_enabled: false });
+    vi.mocked(api.updateWarmFollowUpEnabled).mockResolvedValue({ ...company, warm_follow_up_enabled: true });
+    vi.mocked(api.listContacts).mockResolvedValue({ count: 1, next: null, previous: null, results: [contact] });
+    vi.mocked(api.getContact).mockResolvedValue(contact);
+    vi.mocked(api.setContactFollowUpConsent).mockResolvedValue({ ...contact, follow_up_consent_at: "2026-11-16T15:00:00Z", follow_up_consent_source: "Autorizado no formulário" });
+    renderApp("/settings");
+    fireEvent.click(await screen.findByRole("button", { name: "Ativar" }));
+    expect(screen.getByRole("dialog", { name: "Ativar follow-up automático?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar ativação" }));
+    await waitFor(() => expect(api.updateWarmFollowUpEnabled).toHaveBeenCalledWith(company.id, true));
+    cleanup();
+    renderApp("/contacts");
+    fireEvent.click(await screen.findByRole("button", { name: "Ver Maria" }));
+    fireEvent.change(await screen.findByLabelText("Origem da autorização de retorno"), { target: { value: "Autorizado no formulário" } });
+    fireEvent.click(screen.getByRole("button", { name: "Autorizar retorno" }));
+    await waitFor(() => expect(api.setContactFollowUpConsent).toHaveBeenCalledWith(company.id, contact.id, true, "Autorizado no formulário"));
+  });
+
   it("protects administration routes from agent accounts", async () => {
     vi.mocked(api.getSession).mockResolvedValue({
       ...session,
@@ -354,6 +389,19 @@ describe("Gest Tech protected app", () => {
     expect(await screen.findByText("Mensagem antiga")).toBeInTheDocument();
     expect(screen.getByText("Mensagem mais recente")).toBeInTheDocument();
     await waitFor(() => expect(list.scrollTop).toBe(200));
+  });
+
+  it("returns focus to the message field after a human send", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    renderApp("/inbox");
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: "Olá, posso ajudar" } });
+    const button = screen.getByRole("button", { name: "Enviar" });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    await waitFor(() => expect(composer).toHaveFocus());
   });
 
   it("opens chats at the newest message and follows updates only near the bottom", async () => {

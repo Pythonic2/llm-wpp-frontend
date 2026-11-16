@@ -20,6 +20,7 @@ export interface Company {
   created_at: string;
   role: Role;
   ai_instructions?: string;
+  warm_follow_up_enabled?: boolean;
   business_profile?: "" | "products" | "services" | "both";
   estimated_tax_percent?: string | null;
   desired_margin_percent?: string | null;
@@ -47,6 +48,9 @@ export interface Contact {
   name: string;
   phone: string;
   wa_id: string;
+  follow_up_consent_at?: string | null;
+  follow_up_consent_source?: string;
+  follow_up_opted_out_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -107,6 +111,14 @@ export interface Dashboard {
   warm_leads?: number;
   follow_ups_due?: number;
   follow_up_conversations?: Conversation[];
+  warm_follow_up_enabled?: boolean;
+  warm_follow_up_contacts_today?: number;
+  warm_follow_up_delivered_today?: number;
+  warm_follow_up_replied_today?: number;
+  warm_follow_up_optouts_today?: number;
+  warm_follow_up_failed_today?: number;
+  warm_follow_up_unknown_today?: number;
+  warm_follow_up_attempts?: Array<{ id: number; conversation_id: number; contact_name: string; status: string; created_at: string }>;
   recent_conversations: Conversation[];
 }
 

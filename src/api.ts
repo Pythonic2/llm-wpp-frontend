@@ -161,6 +161,16 @@ export async function updateCompanyAIInstructions(companyId: string, aiInstructi
   return data;
 }
 
+export async function updateWarmFollowUpEnabled(companyId: string, enabled: boolean): Promise<Company> {
+  const { data } = await http.patch<Company>(companyPath(companyId), { warm_follow_up_enabled: enabled });
+  return data;
+}
+
+export async function setContactFollowUpConsent(companyId: string, contactId: number, consent: boolean, source = ""): Promise<Contact> {
+  const { data } = await http.post<Contact>(companyPath(companyId, `contacts/${contactId}/follow-up-consent/`), { consent, source });
+  return data;
+}
+
 export async function getDashboard(companyId: string): Promise<Dashboard> {
   const { data } = await http.get<Dashboard>(companyPath(companyId, "dashboard/"));
   return data;

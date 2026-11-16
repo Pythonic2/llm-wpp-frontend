@@ -99,8 +99,10 @@ import {
   refreshSession,
   removeMember,
   sendMessage,
+  setContactFollowUpConsent,
   updateContact,
   updateCompanyAIInstructions,
+  updateWarmFollowUpEnabled,
   updateConversation,
   updateKnowledgeBase,
   updateMediaAsset,
@@ -499,6 +501,7 @@ function DashboardPage() {
       <section className="stat-grid">{cards.map(({ label, value, icon: Icon, tone }) => (
         <article className="stat-card" key={label}><span className={`stat-icon stat-${tone}`}><Icon size={19} /></span><span className="stat-label">{label}</span><strong className="stat-number">{value.toLocaleString("pt-BR")}</strong></article>
       ))}</section>
+      <section className="panel warm-follow-up-summary" aria-label="Resumo dos contatos automáticos"><div><span className="eyebrow">RETOMADA AUTOMÁTICA</span><h2>A IA entrou em contato com {data.warm_follow_up_contacts_today ?? 0} {data.warm_follow_up_contacts_today === 1 ? "pessoa" : "pessoas"} hoje</h2><p>{data.warm_follow_up_delivered_today ?? 0} entregues · {data.warm_follow_up_replied_today ?? 0} responderam · {data.warm_follow_up_optouts_today ?? 0} descadastros · {data.warm_follow_up_failed_today ?? 0} falhas · {data.warm_follow_up_unknown_today ?? 0} incertos · {data.warm_follow_up_enabled ? "Automação ativa" : "Automação desativada"}</p></div>{(data.warm_follow_up_attempts ?? []).length > 0 && <div className="warm-follow-up-rows">{data.warm_follow_up_attempts?.map((attempt) => <Link key={attempt.id} to={`/inbox?conversation=${attempt.conversation_id}`}><strong>{attempt.contact_name}</strong><span>{attempt.status === "replied" ? "Respondeu" : attempt.status === "opted_out" ? "Descadastrou" : attempt.status === "sent" ? "Enviada" : attempt.status === "delivered" ? "Entregue" : attempt.status === "read" ? "Lida" : attempt.status === "failed" ? "Falhou" : attempt.status === "sending" ? "Enviando" : attempt.status === "unknown" ? "Estado incerto" : "Ignorada"} · {formatTime(attempt.created_at)}</span><ArrowRight size={14} /></Link>)}</div>}</section>
       {roleCanManage(company?.role) && <CommercialSummary companyId={id} />}
       <section className="dashboard-grid">
         <div className="panel recent-panel">
@@ -545,6 +548,9 @@ function InboxPage() {
   const [selectedId, setSelectedId] = useState<number | null>(requestedId);
   const initialSelection = useRef(false);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const sendingConversationIdRef = useRef<number | null>(null);
+  const [focusAfterSendConversationId, setFocusAfterSendConversationId] = useState<number | null>(null);
   const followLatestRef = useRef(true);
   const scrollConversationIdRef = useRef<number | null>(null);
   const olderMessagesAnchorRef = useRef<{ top: number; height: number } | null>(null);
@@ -634,7 +640,21 @@ function InboxPage() {
     mutationFn: (text: string) => sendMessage(companyId, selectedId ?? 0, text),
     onSuccess: () => { setMessage(""); followLatestRef.current = true; refreshConversation(); },
     onError: () => refreshConversation(),
+    onSettled: () => setFocusAfterSendConversationId(sendingConversationIdRef.current),
   });
+  useEffect(() => {
+    if (send.isPending || focusAfterSendConversationId === null) return;
+    if (focusAfterSendConversationId === selectedId && selected?.status !== "closed") {
+      composerRef.current?.focus();
+    }
+    sendingConversationIdRef.current = null;
+    setFocusAfterSendConversationId(null);
+  }, [send.isPending, focusAfterSendConversationId, selectedId, selected?.status]);
+  const submitMessage = () => {
+    if (!message.trim() || !selected || selected.status === "closed" || send.isPending) return;
+    sendingConversationIdRef.current = selected.id;
+    send.mutate(message.trim());
+  };
   const members = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
   const numbers = useQuery({
     queryKey: [...queryKeys.numbers(companyId), "all"],
@@ -666,7 +686,7 @@ function InboxPage() {
   };
   const sendForm = (event: FormEvent) => {
     event.preventDefault();
-    if (message.trim() && selected && selected.status !== "closed" && !send.isPending) send.mutate(message.trim());
+    submitMessage();
   };
   return (
     <div className="inbox-page">
@@ -704,7 +724,7 @@ function InboxPage() {
               {!messageQuery.data?.pages.some((page) => page.results.length) && <div className="chat-empty">As mensagens desta conversa aparecerão aqui.</div>}
             </>}
           </div>
-          <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (message.trim() && selected && selected.status !== "closed" && !send.isPending) send.mutate(message.trim()); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{send.isError && <small className="field-error">{errorMessage(send.error)}</small>}</form>
+          <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea ref={composerRef} aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{send.isError && <small className="field-error">{errorMessage(send.error)}</small>}</form>
         </section> : <section className="chat-panel panel chat-no-selection">{conversationDetail.isError && selectedId ? <ErrorNotice error={conversationDetail.error} retry={() => void conversationDetail.refetch()} /> : <Empty icon={MessageCircle} title="Escolha uma conversa" text="Selecione uma conversa à esquerda para ver as mensagens e iniciar o atendimento." />}</section>}
         {selected && <aside className="contact-panel panel"><div className="contact-panel-title"><h2>Detalhes</h2></div><div className="contact-profile"><span className="contact-avatar contact-avatar-large">{(selected.contact.name || selected.contact.phone || "?").slice(0, 1).toUpperCase()}</span><strong>{selected.contact.name || formatPhone(selected.contact.phone || selected.contact.wa_id)}</strong><span>{formatPhone(selected.contact.phone || selected.contact.wa_id)}</span><Badge tone={selected.status === "closed" ? "neutral" : "brand"}>{statusLabel[selected.status]}</Badge></div>
           <div className="detail-section sales-analysis"><span className="detail-label">ANÁLISE COMERCIAL DA IA</span><div className="analysis-score"><span className={`temperature-pill temperature-${selected.lead_temperature ?? "unknown"}`}>{temperatureLabel[selected.lead_temperature ?? "unknown"]}</span><strong>{selected.purchase_intent_score ?? 0}%</strong></div>{selected.analysis_summary && <p>{selected.analysis_summary}</p>}{(selected.buying_signals ?? []).length > 0 && <div><small>Sinais de compra</small><ul>{(selected.buying_signals ?? []).map((signal) => <li key={signal}>{signal}</li>)}</ul></div>}{(selected.objections ?? []).length > 0 && <div><small>Objeções</small><ul>{(selected.objections ?? []).map((objection) => <li key={objection}>{objection}</li>)}</ul></div>}{selected.recommended_action && <div className="recommended-action"><Target size={13} /><span>{selected.recommended_action}</span></div>}<button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "analyze" })}><RefreshCw size={13} /> Reanalisar</button></div>
@@ -784,6 +804,8 @@ function ContactsPage() {
   const [phone, setPhone] = useState("");
   const [waId, setWaId] = useState("");
   const [formError, setFormError] = useState("");
+  const [consentSource, setConsentSource] = useState("");
+  const [consentFeedback, setConsentFeedback] = useState("");
   const params = { search, page };
   const query = useQuery({ queryKey: queryKeys.contacts(companyId, params), queryFn: () => listContacts(companyId, params), enabled: !!companyId });
   const detail = useQuery({
@@ -819,6 +841,15 @@ function ContactsPage() {
     },
     onError: (error: unknown) => setFormError(errorMessage(error)),
   });
+  const consentMutation = useMutation({
+    mutationFn: (consent: boolean) => setContactFollowUpConsent(companyId, selected?.id ?? 0, consent, consentSource.trim()),
+    onSuccess: async () => {
+      setConsentFeedback("Preferência de retorno atualizada.");
+      await queryClient.invalidateQueries({ queryKey: ["contact", companyId, selectedId] });
+      await invalidateContacts();
+    },
+    onError: (error: unknown) => setConsentFeedback(errorMessage(error)),
+  });
   const remove = useMutation({
     mutationFn: (contactId: number) => deleteContact(companyId, contactId),
     onSuccess: async () => {
@@ -839,6 +870,8 @@ function ContactsPage() {
     setCreateOpen(false);
     setName(contact.name);
     setPhone(contact.phone);
+    setConsentSource(contact.follow_up_consent_source || "");
+    setConsentFeedback("");
     setFormError("");
   };
   return <div className="page-stack">
@@ -860,6 +893,7 @@ function ContactsPage() {
         {!createOpen && selected && <label>WhatsApp ID<input value={selected.wa_id} readOnly /></label>}
         <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setSelectedId(null); setCreateOpen(false); }}>Cancelar</button><button className="button button-primary" disabled={create.isPending || update.isPending || (!createOpen && !selected)}>{createOpen ? "Criar contato" : update.isPending ? "Salvando…" : "Salvar alterações"}</button></div>
       </form>}
+      {!createOpen && selected && roleCanManage(company?.role) && <div className="contact-consent"><strong>Retorno automático pelo WhatsApp</strong><p>Registre autorização explícita do cliente para que a IA possa retomar uma conversa morna. O cliente pode retirar essa autorização a qualquer momento.</p><label>Onde o cliente autorizou?<input aria-label="Origem da autorização de retorno" maxLength={160} value={consentSource} onChange={(event) => setConsentSource(event.target.value)} placeholder="Ex.: formulário de cadastro de 16/11" /></label><div className="contact-consent-actions"><button type="button" className="button button-primary button-small" disabled={consentMutation.isPending || consentSource.trim().length < 5} onClick={() => consentMutation.mutate(true)}>{selected.follow_up_consent_at ? "Atualizar autorização" : "Autorizar retorno"}</button>{selected.follow_up_consent_at && <button type="button" className="button button-secondary button-small" disabled={consentMutation.isPending} onClick={() => consentMutation.mutate(false)}>Revogar autorização</button>}</div><small>{selected.follow_up_consent_at ? `Autorizado em ${formatDate(selected.follow_up_consent_at)}` : "Sem autorização registrada"}</small>{consentFeedback && <small role="status">{consentFeedback}</small>}</div>}
       {!createOpen && selected && <div className="contact-conversations"><strong>Conversas deste contato</strong>{conversations.isPending ? <Loading /> : conversations.isError ? <ErrorNotice error={conversations.error} retry={() => void conversations.refetch()} /> : conversations.data?.length ? conversations.data.map((item) => <Link key={item.id} to={`/inbox?conversation=${item.id}`} className="contact-conversation-row"><span>Conversa #{item.id}</span><Badge tone={item.status === "closed" ? "neutral" : "brand"}>{statusLabel[item.status]}</Badge><ArrowRight size={14} /></Link>) : <small>Este contato ainda não tem conversas.</small>}</div>}
     </section></div>}
   </div>;
@@ -1378,6 +1412,7 @@ function SettingsPage() {
   const [copyFeedback, setCopyFeedback] = useState("");
   const [aiInstructions, setAiInstructions] = useState("");
   const [promptFeedback, setPromptFeedback] = useState("");
+  const [enableConfirmOpen, setEnableConfirmOpen] = useState(false);
   const query = useQuery({ queryKey: queryKeys.company(companyId), queryFn: () => getCompany(companyId), enabled: !!companyId });
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -1389,6 +1424,11 @@ function SettingsPage() {
       setPromptFeedback("Instruções salvas. As próximas respostas da IA usarão esta configuração.");
       await queryClient.invalidateQueries({ queryKey: queryKeys.company(companyId) });
     },
+    onError: (error: unknown) => setPromptFeedback(errorMessage(error)),
+  });
+  const followUpToggle = useMutation({
+    mutationFn: (enabled: boolean) => updateWarmFollowUpEnabled(companyId, enabled),
+    onSuccess: async () => { setEnableConfirmOpen(false); await queryClient.invalidateQueries({ queryKey: queryKeys.company(companyId) }); },
     onError: (error: unknown) => setPromptFeedback(errorMessage(error)),
   });
   if (query.isPending) return <Loading />;
@@ -1407,6 +1447,8 @@ function SettingsPage() {
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Building2 size={18} /></span><div><h2>Dados da empresa</h2><p>Identificação do espaço de trabalho.</p></div></div><div className="settings-fields"><label>Nome da empresa<input value={data.name} readOnly /></label><label>Identificador<input value={data.slug} readOnly /></label><label>Papel do usuário<input value={roleLabel[company?.role ?? "agent"]} readOnly /></label><label>Usuário<input value={session.user.username} readOnly /></label><label>ID da empresa<input value={data.id} readOnly /></label><label>Desde<input value={formatDate(data.created_at)} readOnly /></label></div><div className="settings-note"><Shield size={16} /> Os dados cadastrais são gerenciados pelo administrador do sistema.</div></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><ShoppingCart size={18} /></span><div><h2>Perfil comercial</h2><p>Produtos, serviços e configurações financeiras opcionais.</p></div></div><Link className="button button-secondary" to="/commercial-settings">Abrir configurações comerciais</Link></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Integrações</h2><p>Conexões configuradas no servidor, sem exposição de credenciais.</p></div></div><div className="integration-row"><span className="integration-logo whats-logo"><MessageCircle size={19} /></span><span><strong>WhatsApp Cloud API</strong><small>Integração para envio e recebimento de mensagens.</small></span><Badge tone={data.integrations?.whatsapp_configured ? "green" : "peach"}>{data.integrations?.whatsapp_configured ? "Configurada" : "Pendente"}</Badge></div><div className="integration-row"><span className="integration-logo gemini-logo"><Sparkles size={19} /></span><span><strong>Google Gemini</strong><small>Geração de respostas e embeddings para busca RAG.</small></span><Badge tone={data.integrations?.gemini_configured ? "green" : "peach"}>{data.integrations?.gemini_configured ? "Configurada" : "Pendente"}</Badge></div></section>
+    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Target size={18} /></span><div><h2>Follow-up de conversas mornas</h2><p>Se o contato autorizou o retorno, a IA pode enviar uma mensagem após 20 horas sem resposta, das 9h às 18h (Brasília) e antes do limite de 24 horas do WhatsApp.</p></div></div><div className="warm-follow-up-setting"><span>Envio automático {data.warm_follow_up_enabled ? "ativado" : "desativado"}</span><button type="button" className={`button ${data.warm_follow_up_enabled ? "button-secondary" : "button-primary"}`} disabled={followUpToggle.isPending} onClick={() => data.warm_follow_up_enabled ? followUpToggle.mutate(false) : setEnableConfirmOpen(true)}>{data.warm_follow_up_enabled ? "Desativar" : "Ativar"}</button></div><p className="settings-note"><Shield size={16} /> Cada contato precisa ter consentimento registrado. O painel mostra pessoas contatadas, entregas e falhas; máximo de 20 envios por dia e um por contato a cada 7 dias.</p></section>
+    {enableConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEnableConfirmOpen(false); }}><section className="modal-card warm-follow-up-confirm" role="dialog" aria-modal="true" aria-labelledby="warm-follow-up-confirm-title"><div className="modal-heading"><div><span className="eyebrow">AUTOMAÇÃO DE MENSAGENS</span><h2 id="warm-follow-up-confirm-title">Ativar follow-up automático?</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setEnableConfirmOpen(false)}><X size={18} /></button></div><p>A IA poderá enviar até 20 mensagens por dia a contatos com autorização registrada. Ela aguardará 20 horas sem resposta e respeitará o horário das 9h às 18h, em Brasília.</p><div className="modal-actions"><button type="button" className="button button-secondary" autoFocus onClick={() => setEnableConfirmOpen(false)}>Cancelar</button><button type="button" className="button button-primary" disabled={followUpToggle.isPending} onClick={() => followUpToggle.mutate(true)}>{followUpToggle.isPending ? "Ativando…" : "Confirmar ativação"}</button></div></section></div>}
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Personalidade da IA</h2><p>Defina como a IA deve atender os clientes desta empresa.</p></div></div><form className="ai-instructions-form" onSubmit={(event) => { event.preventDefault(); setPromptFeedback(""); if (aiInstructions.trim()) saveInstructions.mutate(); }}><label>Instruções de atendimento<textarea aria-label="Instruções de atendimento da IA" value={aiInstructions} maxLength={8000} rows={9} onChange={(event) => { setAiInstructions(event.target.value); setPromptFeedback(""); }} /><span className="prompt-counter">{aiInstructions.length}/8000 caracteres</span></label><div className="prompt-guidance"><strong>Como escrever um bom prompt</strong><p>Explique o papel da IA, o tipo de cliente, o tom de voz, os objetivos do atendimento e o que ela deve evitar. Não inclua senhas, tokens ou dados pessoais.</p><p>Você pode pedir a uma IA: “Crie instruções para um atendente virtual de [seu nicho], com tom [formal, acolhedor, urgente…], que deve [objetivos] e nunca deve [limites]”.</p></div><div className="prompt-actions"><button className="button button-secondary" type="button" onClick={() => { setAiInstructions(DEFAULT_AI_INSTRUCTIONS_EXAMPLE); setPromptFeedback(""); }}>Usar exemplo genérico</button><button className="button button-primary" type="submit" disabled={!aiInstructions.trim() || saveInstructions.isPending}>{saveInstructions.isPending ? "Salvando…" : "Salvar instruções"}</button></div>{promptFeedback && <small className={saveInstructions.isError ? "field-error" : "copy-feedback"} role="status">{promptFeedback}</small>}<div className="settings-note"><Shield size={16} /> Regras de segurança, isolamento entre empresas e uso exclusivo da base de conhecimento continuam protegidas pelo sistema.</div></form></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Shield size={18} /></span><div><h2>Webhook da Meta</h2><p>Cadastre este endereço na configuração do aplicativo da Meta.</p></div></div><div className="webhook-copy-row"><label className="webhook-field">URL do webhook<input readOnly value={webhookUrl} /></label><button className="button button-secondary button-small" onClick={() => void copyWebhook()}>Copiar URL</button></div>{copyFeedback && <small role="status" className="copy-feedback">{copyFeedback}</small>}<div className="settings-note"><CircleHelp size={16} /> No painel da Meta, configure esta URL pública (HTTPS) como callback do webhook e assine os eventos de mensagens. O token de verificação e o segredo permanecem no servidor; não há conexão fictícia ou cadastro automático de número.</div></section>
   </div>;
