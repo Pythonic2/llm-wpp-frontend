@@ -26,6 +26,17 @@ export const apiOrigin = new URL(
 ).origin;
 let sessionEstablished = false;
 
+export function selectedBusinessUnit(companyId: string): string | null {
+  return typeof localStorage === "undefined" ? null : localStorage.getItem(`gest-tech-unit:${companyId}`);
+}
+
+export function setSelectedBusinessUnit(companyId: string, unitId: string): void {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(`gest-tech-unit:${companyId}`, unitId);
+    window.dispatchEvent(new CustomEvent("gest-tech:unit-changed", { detail: { companyId, unitId } }));
+  }
+}
+
 export const http = axios.create({
   baseURL,
   withCredentials: true,
@@ -43,6 +54,22 @@ function readCookie(name: string): string | undefined {
 
 http.interceptors.request.use(async (config) => {
   const method = config.method?.toLowerCase();
+  const match = /^\/companies\/([0-9a-f-]{36})\/(.+)/i.exec(config.url || "");
+  if (match) {
+    const unitId = selectedBusinessUnit(match[1]);
+    const route = match[2];
+    if (unitId && method === "get" && /^(dashboard\/|conversations\/$|orders\/$|knowledge-bases\/$|media-assets\/$|catalog\/items\/$|sales\/$|sales\/report\.csv$|finance\/dashboard\/$|whatsapp-numbers\/$)/.test(route)) {
+      const params = (config.params || {}) as Record<string, unknown>;
+      if (!("business_unit_id" in params)) config.params = { ...params, business_unit_id: unitId };
+    }
+    if (unitId && method === "post" && /^(knowledge-bases\/|media-assets\/|catalog\/items\/|sales\/|whatsapp-numbers\/|whatsapp\/embedded-signup\/complete\/)$/.test(route)) {
+      if (config.data instanceof FormData) {
+        if (!config.data.has("business_unit_id")) config.data.append("business_unit_id", unitId);
+      } else if (config.data && typeof config.data === "object" && !("business_unit_id" in config.data)) {
+        config.data = { ...config.data, business_unit_id: unitId };
+      }
+    }
+  }
   if (method && !["get", "head", "options", "trace"].includes(method)) {
     let csrf = readCookie("csrftoken");
     if (!csrf) {

@@ -18,14 +18,25 @@ function renderPage(path: string, element: React.ReactNode) {
 }
 
 describe("Cadastro e confirmação de assinatura", () => {
-  beforeEach(() => { vi.resetAllMocks(); sessionStorage.clear(); });
+  const prices = { first_company_price: "249.90", extra_company_price: "199.90", extra_number_price: "30.00", included_numbers: 2, included_business_units: 2 };
+  beforeEach(() => {
+    vi.resetAllMocks(); sessionStorage.clear();
+    vi.mocked(http.get).mockImplementation(async () => ({ data: prices }));
+  });
   afterEach(cleanup);
 
-  it("mostra o preço mensal e os dois números antes do cadastro", () => {
+  it("mostra o preço mensal e os dois números antes do cadastro", async () => {
     renderPage("/", <LandingPage />);
-    expect(screen.getByText(/R\$ 249,90/)).toBeInTheDocument();
-    expect(screen.getByText(/Uma empresa com até dois números/)).toBeInTheDocument();
+    expect(await screen.findByText(/R\$ 249,90/)).toBeInTheDocument();
+    expect(screen.getByText(/até 2 unidades de negócio e 2 números/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Criar minha conta" })).toHaveAttribute("href", "/signup");
+  });
+
+  it("mostra o preço atualizado recebido do backend", async () => {
+    vi.mocked(http.get).mockResolvedValue({ data: { ...prices, first_company_price: "279.90" } });
+    renderPage("/", <LandingPage />);
+    expect(await screen.findByText(/R\$ 279,90/)).toBeInTheDocument();
+    expect(screen.queryByText(/R\$ 249,90/)).not.toBeInTheDocument();
   });
 
   it("mantém o checkout pendente sem liberar o CRM pelo retorno do navegador", async () => {
@@ -54,6 +65,7 @@ describe("Cadastro e confirmação de assinatura", () => {
   it("expõe erro de cadastro sem inventar pagamento confirmado", async () => {
     vi.mocked(http.post).mockRejectedValue(new Error("Documento inválido"));
     renderPage("/signup", <SignupPage />);
+    await screen.findByText(/R\$ 249,90/);
     fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "maria@example.com" } });
     fireEvent.change(screen.getByLabelText("Senha"), { target: { value: "SenhaSegura123!" } });
     fireEvent.change(screen.getByLabelText("Nome da empresa ou negócio"), { target: { value: "Ateliê" } });
@@ -69,7 +81,7 @@ describe("Cadastro e confirmação de assinatura", () => {
   });
 
   it("pede e-mail de cobrança para uma conta legada e envia no checkout", async () => {
-    vi.mocked(http.get).mockResolvedValue({ data: { configured: true, email_required: true } });
+    vi.mocked(http.get).mockImplementation(async url => ({ data: url === "/public/prices/" ? prices : { configured: true, email_required: true } }));
     vi.mocked(http.post).mockRejectedValue(new Error("Falha simulada"));
     renderPage("/companies/new", <AddCompanyPage />);
     expect(await screen.findByLabelText("E-mail de cobrança")).toBeInTheDocument();

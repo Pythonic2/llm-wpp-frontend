@@ -114,6 +114,34 @@ describe("session API contract", () => {
   });
 });
 
+describe("business unit API scope", () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  const unitId = "22222222-2222-4222-8222-222222222222";
+
+  afterEach(() => {
+    api.http.defaults.adapter = originalAdapter;
+    localStorage.removeItem(`gest-tech-unit:${companyId}`);
+  });
+
+  it("scopes lists and creation while allowing an explicit consolidated finance view", async () => {
+    document.cookie = "csrftoken=csrf-token; path=/";
+    api.setSelectedBusinessUnit(companyId, unitId);
+    const calls: Array<{ url?: string; params?: Record<string, unknown>; data?: unknown }> = [];
+    api.http.defaults.adapter = async (config) => {
+      calls.push({ url: config.url, params: config.params, data: config.data });
+      return { config, data: {}, status: 200, statusText: "OK", headers: {} };
+    };
+
+    await api.http.get(api.companyPath(companyId, "conversations/"));
+    await api.http.post(api.companyPath(companyId, "knowledge-bases/"), { name: "Eventos" });
+    await api.http.get(api.companyPath(companyId, "finance/dashboard/"), { params: { business_unit_id: "" } });
+
+    expect(calls[0].params).toMatchObject({ business_unit_id: unitId });
+    expect(JSON.parse(String(calls[1].data))).toMatchObject({ business_unit_id: unitId });
+    expect(calls[2].params).toMatchObject({ business_unit_id: "" });
+  });
+});
+
 describe("media API contract", () => {
   afterEach(() => {
     api.http.defaults.adapter = originalAdapter;

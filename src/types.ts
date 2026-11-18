@@ -56,6 +56,7 @@ export interface Contact {
 }
 
 export interface Conversation {
+  business_unit_id?: string | null;
   id: number;
   contact: Contact;
   whatsapp_number: number;
@@ -123,6 +124,7 @@ export interface Dashboard {
 }
 
 export interface KnowledgeBase {
+  business_unit_id: string;
   id: number;
   name: string;
   is_active: boolean;
@@ -150,6 +152,7 @@ export interface MediaCategory {
 }
 
 export interface MediaAsset {
+  business_unit_id?: string | null;
   id: string;
   name: string;
   description: string;
@@ -173,6 +176,7 @@ export interface MediaAsset {
 }
 
 export interface WhatsAppNumber {
+  business_unit_id?: string | null;
   id: number;
   phone_number_id: string;
   display_phone_number: string;
@@ -191,6 +195,7 @@ export interface WhatsAppNumber {
 
 export type OrderStatus = "awaiting_approval" | "approved" | "rejected" | "cancelled";
 export interface Order {
+  business_unit_id?: string | null;
   id: string;
   conversation: number;
   customer_name: string;

@@ -605,7 +605,6 @@ describe("Gest Tech protected app", () => {
       is_active: true,
       created_at: "2026-01-01T12:00:00Z",
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderApp("/numbers");
 
     fireEvent.click(await screen.findByRole("button", { name: /Cadastro manual/ }));
@@ -631,8 +630,13 @@ describe("Gest Tech protected app", () => {
     })));
 
     fireEvent.click(await screen.findByRole("button", { name: "Excluir +5511999999999" }));
+    expect(screen.getByRole("dialog", { name: "Excluir número manual?" })).toHaveTextContent("+5511999999999");
+    expect(api.deleteNumber).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(api.deleteNumber).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Excluir +5511999999999" }));
+    fireEvent.click(screen.getByRole("button", { name: "Excluir número" }));
     await waitFor(() => expect(api.deleteNumber).toHaveBeenCalledWith(company.id, 3));
-    expect(confirm).toHaveBeenCalled();
   });
 
   it("routes expired sessions to login", async () => {
