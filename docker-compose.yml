@@ -1,6 +1,6 @@
 services:
   frontend:
-    image: "ghcr.io/pythonic2/llm-wpp-frontend:sha-9b077ea33001eb4ddb4cc56e50b7fe3edb30dc05"
+    image: "ghcr.io/pythonic2/llm-wpp-frontend:sha-afe9802a50abfb8a86fd16d69ed4263e99f9f744"
     pull_policy: always
     restart: unless-stopped
     ports:

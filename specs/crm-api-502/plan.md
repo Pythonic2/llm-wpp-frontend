@@ -3,7 +3,7 @@
 1. Trocar o destino do proxy `/api/` por `ubuntu.local:8123`, host atual informado pelo usuário. Resolver via DNS do container em tempo de execução para manter o frontend estático disponível caso o nome falhe.
 2. Substituir o IP antigo no cabeçalho `Host` por `ubuntu.local`. Remover a reescrita de `Origin` para o Django validar a origem real do navegador. Manter os cookies como estão nesta etapa.
 3. Validar Compose, testes do frontend, lint, build e sintaxe do Nginx se o binário estiver disponível.
-4. Sem publicação automática: após autorização específica, publicar imagem versionada, atualizar apenas a stack do frontend e verificar CSRF, login e inbox. Observar logs de Nginx e backend.
+4. A imagem `sha-afe9802a50abfb8a86fd16d69ed4263e99f9f744` foi publicada pelo workflow em 26/11/2026, mas a stack ainda fixa `sha-9b077ea33001eb4ddb4cc56e50b7fe3edb30dc05`. Alinhar `docker-compose.yml` à imagem nova e, após autorização específica, atualizar apenas a stack do frontend e verificar CSRF, login e inbox. Observar logs de Nginx e backend.
 
 ## Recuperação
 
@@ -17,6 +17,7 @@ Se o novo proxy falhar, restaurar a tag anterior da imagem do frontend na stack 
 - `npm run build`: passou; Rollup emitiu apenas avisos sobre comentários de dependência Zod.
 - `docker run --rm --pull=never --network none ... nginx:alpine nginx -t`: sintaxe Nginx passou.
 - Portainer mostra o frontend conectado a `pi_default`; isso não comprova acesso à máquina `ubuntu.local`.
+- Em 26/11/2026, o workflow `Publish frontend image` do commit `afe9802` concluiu com sucesso, mas o container `front-saas-frontend-1` no Portainer ainda roda a imagem `sha-9b077ea`. A stack usa `docker-compose.yml` do repositório Git.
 - Pendentes: conexão real do Nginx ao backend, status do endpoint CSRF no CRM e login com conta de teste após publicação.
 
 ## Checklist de publicação
