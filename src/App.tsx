@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   ArrowDownLeft,
@@ -132,6 +133,7 @@ import type {
   MediaCategory,
   Membership,
   Message,
+  Page,
   Role,
   Session,
   WhatsAppNumber,
@@ -572,6 +574,29 @@ function pageNumberFromLink(link: string | null): number | undefined {
   return Number.isInteger(page) && page > 0 ? page : undefined;
 }
 
+type SendPreview = {
+  conversationId: number;
+  text: string;
+  key: string;
+  createdAt: string;
+  phase: "sending" | "uncertain" | "failed";
+};
+
+function messageFromSendError(error: unknown): Message | null {
+  if (!isAxiosError(error) || !error.response?.data || typeof error.response.data !== "object") return null;
+  const candidate: unknown = (error.response.data as { message?: unknown }).message;
+  if (!candidate || typeof candidate !== "object") return null;
+  const message = candidate as Partial<Message>;
+  if (typeof message.id !== "number" || message.direction !== "out" || typeof message.text !== "string"
+    || !["pending", "sent", "delivered", "read", "failed"].includes(message.status ?? "")) return null;
+  return message as Message;
+}
+
+function isDefinitiveSendRejection(error: unknown): boolean {
+  const status = isAxiosError(error) ? error.response?.status : undefined;
+  return status !== undefined && [400, 401, 403, 404, 409, 422].includes(status);
+}
+
 function InboxPage() {
   const confirm = useConfirm();
   const { company, session } = useApp();
@@ -582,8 +607,6 @@ function InboxPage() {
   const initialSelection = useRef(false);
   const messageListRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const sendingConversationIdRef = useRef<number | null>(null);
-  const [focusAfterSendConversationId, setFocusAfterSendConversationId] = useState<number | null>(null);
   const followLatestRef = useRef(true);
   const scrollConversationIdRef = useRef<number | null>(null);
   const olderMessagesAnchorRef = useRef<{ top: number; height: number } | null>(null);
@@ -594,8 +617,22 @@ function InboxPage() {
   const [numberId, setNumberId] = useState("");
   const [hideClosed, setHideClosed] = useState(true);
   const [page, setPage] = useState(1);
-  const [message, setMessage] = useState("");
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const message = selectedId ? drafts[selectedId] ?? "" : "";
+  const setMessage = (value: string | ((current: string) => string), conversationId = selectedId) => {
+    if (!conversationId) return;
+    setDrafts((current) => {
+      const next = typeof value === "function" ? value(current[conversationId] ?? "") : value;
+      return { ...current, [conversationId]: next };
+    });
+  };
   const [sendFeedback, setSendFeedback] = useState("");
+  const [sendFeedbackConversationId, setSendFeedbackConversationId] = useState<number | null>(null);
+  const [sendPreview, setSendPreview] = useState<SendPreview | null>(null);
+  const [unresolvedSend, setUnresolvedSend] = useState(false);
+  const [unresolvedMessageId, setUnresolvedMessageId] = useState<number | null>(null);
+  const [retryAvailable, setRetryAvailable] = useState(false);
+  const [inspectingSend, setInspectingSend] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const pendingTemplateRef = useRef<{ conversationId: number; name: string; language: string; key: string } | null>(null);
   const pendingSendRef = useRef<{ conversationId: number; text: string; key: string } | null>(null);
@@ -630,7 +667,7 @@ function InboxPage() {
     getPreviousPageParam: (page) => pageNumberFromLink(page.previous),
     getNextPageParam: (page) => pageNumberFromLink(page.next),
     enabled: !!selectedId && !!companyId,
-    refetchInterval: 5_000,
+    refetchInterval: sendPreview?.phase === "sending" && sendPreview.conversationId === selectedId ? false : 5_000,
   });
   const templates = useQuery({
     queryKey: ["conversation-templates", companyId, selectedId],
@@ -654,20 +691,87 @@ function InboxPage() {
     } else if (followLatestRef.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [selectedId, messageQuery.data, messageQuery.isFetchingPreviousPage]);
+  }, [selectedId, messageQuery.data, messageQuery.isFetchingPreviousPage, sendPreview]);
   const loadOlderMessages = () => {
     const element = messageListRef.current;
     if (element) olderMessagesAnchorRef.current = { top: element.scrollTop, height: element.scrollHeight };
     void messageQuery.fetchPreviousPage();
   };
   const queryClient = useQueryClient();
-  const refreshConversation = () => {
+  const refreshConversation = (conversationId = selectedId) => {
     void queryClient.invalidateQueries({ queryKey: ["conversations", companyId] });
-    if (selectedId) {
-      void queryClient.invalidateQueries({ queryKey: ["conversation", companyId, selectedId] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.messages(companyId, selectedId) });
+    if (conversationId) {
+      void queryClient.invalidateQueries({ queryKey: ["conversation", companyId, conversationId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.messages(companyId, conversationId) });
     }
   };
+  const cacheServerMessage = (conversationId: number, result: Message) => {
+    queryClient.setQueryData<InfiniteData<Page<Message>, number | null>>(
+      queryKeys.messages(companyId, conversationId),
+      (current) => {
+        if (!current?.pages.length) {
+          return { pages: [{ count: 1, next: null, previous: null, results: [result] }], pageParams: [null] };
+        }
+        const existed = current.pages.some((page) => page.results.some((item) => item.id === result.id));
+        return {
+          ...current,
+          pages: current.pages.map((page, index) => {
+            const results = page.results.filter((item) => item.id !== result.id);
+            if (index === current.pages.length - 1) {
+              results.push(result);
+              results.sort((a, b) => {
+                const time = Date.parse(a.sent_at || a.created_at) - Date.parse(b.sent_at || b.created_at);
+                return time || a.id - b.id;
+              });
+            }
+            return { ...page, count: page.count + (existed ? 0 : 1), results };
+          }),
+        };
+      },
+    );
+  };
+  const resolveSend = (result: Message, attempt: { conversationId: number; text: string; key: string }, consulted = false) => {
+    cacheServerMessage(attempt.conversationId, result);
+    setSendPreview(null);
+    setRetryAvailable(false);
+    setSendFeedbackConversationId(attempt.conversationId);
+    if (result.status === "pending") {
+      setUnresolvedSend(true);
+      setUnresolvedMessageId(result.id);
+      setSendFeedback("O envio ainda está pendente. Consulte a tentativa antes de enviar outra mensagem.");
+    } else if (result.status === "failed") {
+      pendingSendRef.current = null;
+      setUnresolvedSend(false);
+      setUnresolvedMessageId(null);
+      setMessage((current) => current || attempt.text, attempt.conversationId);
+      setSendFeedback("O envio falhou. Confira a conversa e tente novamente.");
+    } else {
+      pendingSendRef.current = null;
+      setUnresolvedSend(false);
+      setUnresolvedMessageId(null);
+      setSendFeedback(consulted ? "Mensagem enviada. A conversa foi atualizada." : "");
+    }
+    followLatestRef.current = true;
+    refreshConversation(attempt.conversationId);
+  };
+  useEffect(() => {
+    const attempt = pendingSendRef.current;
+    if (!unresolvedSend || !unresolvedMessageId || attempt?.conversationId !== selectedId) return;
+    const updated = messageQuery.data?.pages.flatMap((page) => page.results)
+      .find((item) => item.id === unresolvedMessageId && ["sent", "delivered", "read", "failed"].includes(item.status));
+    if (!updated) return;
+    pendingSendRef.current = null;
+    setUnresolvedSend(false);
+    setUnresolvedMessageId(null);
+    setRetryAvailable(false);
+    setSendFeedbackConversationId(attempt.conversationId);
+    if (updated.status === "failed") {
+      setDrafts((current) => ({ ...current, [attempt.conversationId]: current[attempt.conversationId] || attempt.text }));
+      setSendFeedback("O envio falhou. Confira a conversa e tente novamente.");
+    } else {
+      setSendFeedback("Mensagem enviada. A conversa foi atualizada.");
+    }
+  }, [messageQuery.data, unresolvedMessageId, unresolvedSend, selectedId]);
   const action = useMutation({
     mutationFn: ({ name, payload }: { name: "pause-ai" | "resume-ai" | "close" | "reopen" | "assign" | "analyze" | "mark-won" | "mark-lost" | "reopen-opportunity" | "complete-follow-up" | "snooze-follow-up"; payload?: Record<string, unknown> }) =>
       conversationAction(companyId, selectedId ?? 0, name, payload),
@@ -680,23 +784,31 @@ function InboxPage() {
     onError: (error: unknown) => setActionError(errorMessage(error)),
   });
   const send = useMutation({
-    mutationFn: ({ text, key }: { text: string; key: string }) => sendMessage(companyId, selectedId ?? 0, text, key),
-    onSuccess: (result) => {
-      if (result.status === "pending") {
-        setSendFeedback("O resultado deste envio ainda é incerto. Consulte a tentativa antes de escrever outra mensagem.");
-      } else if (result.status === "failed") {
+    mutationFn: ({ conversationId, text, key }: { conversationId: number; text: string; key: string }) =>
+      sendMessage(companyId, conversationId, text, key),
+    onSuccess: (result, attempt) => resolveSend(result, attempt),
+    onError: (error: unknown, attempt) => {
+      setSendFeedbackConversationId(attempt.conversationId);
+      const serverMessage = messageFromSendError(error);
+      if (serverMessage?.text.trim() === attempt.text) {
+        resolveSend(serverMessage, attempt);
+      } else if (isDefinitiveSendRejection(error)) {
         pendingSendRef.current = null;
-        setSendFeedback("O envio falhou. Confira a conversa e tente novamente.");
+        setUnresolvedSend(false);
+        setUnresolvedMessageId(null);
+        setRetryAvailable(false);
+        setSendPreview((current) => current?.key === attempt.key ? { ...current, phase: "failed" } : current);
+        setMessage((current) => current || attempt.text, attempt.conversationId);
+        setSendFeedback(errorMessage(error));
+        refreshConversation(attempt.conversationId);
       } else {
-        pendingSendRef.current = null;
-        setSendFeedback("");
-        setMessage("");
+        setSendPreview((current) => current?.key === attempt.key ? { ...current, phase: "uncertain" } : current);
+        setUnresolvedSend(true);
+        setUnresolvedMessageId(null);
+        setRetryAvailable(false);
+        setSendFeedback("Não foi possível confirmar o envio. Consulte a tentativa antes de reenviar.");
       }
-      followLatestRef.current = true;
-      refreshConversation();
     },
-    onError: (error: unknown) => { setSendFeedback(errorMessage(error)); refreshConversation(); },
-    onSettled: () => setFocusAfterSendConversationId(sendingConversationIdRef.current),
   });
   const templateSend = useMutation({
     mutationFn: ({ name, language, key }: { name: string; language: string; key: string }) =>
@@ -709,50 +821,61 @@ function InboxPage() {
     },
     onError: error => { setSendFeedback(errorMessage(error)); refreshConversation(); },
   });
-  useEffect(() => {
-    if (send.isPending || focusAfterSendConversationId === null) return;
-    if (focusAfterSendConversationId === selectedId && selected?.status !== "closed") {
-      composerRef.current?.focus();
-    }
-    sendingConversationIdRef.current = null;
-    setFocusAfterSendConversationId(null);
-  }, [send.isPending, focusAfterSendConversationId, selectedId, selected?.status]);
   const submitMessage = () => {
-    if (!message.trim() || !selected || selected.status === "closed" || send.isPending) return;
-    sendingConversationIdRef.current = selected.id;
-    const text = message.trim();
-    if (!pendingSendRef.current || pendingSendRef.current.conversationId !== selected.id || pendingSendRef.current.text !== text) {
-      pendingSendRef.current = { conversationId: selected.id, text, key: idempotencyKey() };
-    }
+    if (!message.trim() || !selected || selected.status === "closed" || send.isPending || unresolvedSend || pendingSendRef.current) return;
+    const attempt = { conversationId: selected.id, text: message.trim(), key: idempotencyKey() };
+    pendingSendRef.current = attempt;
+    setSendPreview({ ...attempt, createdAt: new Date().toISOString(), phase: "sending" });
+    setMessage("");
+    setRetryAvailable(false);
     setSendFeedback("");
-    send.mutate({ text, key: pendingSendRef.current.key });
+    setUnresolvedMessageId(null);
+    setSendFeedbackConversationId(selected.id);
+    followLatestRef.current = true;
+    void queryClient.cancelQueries({ queryKey: queryKeys.messages(companyId, selected.id) });
+    send.mutate(attempt);
+    composerRef.current?.focus();
   };
   const inspectSend = async () => {
     const attempt = pendingSendRef.current;
-    if (!attempt) return;
+    if (!attempt || inspectingSend || send.isPending) return;
+    setInspectingSend(true);
     try {
       const result = await getMessageAttempt(companyId, attempt.conversationId, attempt.key);
-      if (result.status === "sent" || result.status === "delivered" || result.status === "read") {
-        pendingSendRef.current = null;
-        setMessage("");
-        setSendFeedback("Mensagem enviada. A conversa foi atualizada.");
-      } else if (result.status === "failed") {
-        pendingSendRef.current = null;
-        setSendFeedback("O envio falhou. Você pode tentar novamente.");
-      } else {
-        setSendFeedback("O envio ainda está pendente. Verifique novamente antes de reenviar.");
-      }
-      refreshConversation();
+      resolveSend(result, attempt, true);
     } catch (error) {
-      setSendFeedback(errorMessage(error));
+      setSendFeedbackConversationId(attempt.conversationId);
+      if (isAxiosError(error) && error.response?.status === 404) {
+        setRetryAvailable(true);
+        setSendFeedback("Tentativa não localizada. Você pode repetir com segurança usando a mesma chave.");
+      } else {
+        setSendFeedback(errorMessage(error));
+      }
+    } finally {
+      setInspectingSend(false);
     }
   };
+  const retrySend = () => {
+    const attempt = pendingSendRef.current;
+    if (!attempt || send.isPending || !retryAvailable) return;
+    setSendPreview((current) => current?.key === attempt.key
+      ? { ...current, phase: "sending" }
+      : { ...attempt, createdAt: new Date().toISOString(), phase: "sending" });
+    setUnresolvedSend(false);
+    setUnresolvedMessageId(null);
+    setRetryAvailable(false);
+    setSendFeedback("");
+    setSendFeedbackConversationId(attempt.conversationId);
+    send.mutate(attempt);
+  };
+  const sendBlocked = send.isPending || unresolvedSend || !!pendingSendRef.current;
   const submitTemplate = (name: string, language: string) => {
-    if (!selectedId || templateSend.isPending) return;
+    if (!selectedId || templateSend.isPending || sendBlocked) return;
     if (!pendingTemplateRef.current || pendingTemplateRef.current.conversationId !== selectedId || pendingTemplateRef.current.name !== name || pendingTemplateRef.current.language !== language) {
       pendingTemplateRef.current = { conversationId: selectedId, name, language, key: idempotencyKey() };
     }
     setSendFeedback("");
+    setSendFeedbackConversationId(selectedId);
     templateSend.mutate(pendingTemplateRef.current);
   };
   const members = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
@@ -788,6 +911,7 @@ function InboxPage() {
     event.preventDefault();
     submitMessage();
   };
+  const visibleSendPreview = sendPreview?.conversationId === selectedId ? sendPreview : null;
   return (
     <div className="inbox-page">
       <div className="inbox-heading"><div><span className="eyebrow">CENTRAL DE ATENDIMENTO</span><h1>Caixa de entrada</h1><p>Converse com seus clientes e acompanhe a operação da IA.</p></div><Badge tone="green"><i /> Atualização automática</Badge></div>
@@ -821,10 +945,21 @@ function InboxPage() {
             {messageQuery.isPending ? <Loading label="Carregando mensagens…" /> : messageQuery.isError ? <ErrorNotice error={messageQuery.error} retry={() => void messageQuery.refetch()} /> : <>
               {messageQuery.hasPreviousPage && <button className="load-older" disabled={messageQuery.isFetchingPreviousPage} onClick={loadOlderMessages}>{messageQuery.isFetchingPreviousPage ? <LoaderCircle className="spin" size={14} /> : <Clock3 size={14} />} Carregar mensagens anteriores</button>}
               {(messageQuery.data?.pages.flatMap((page) => page.results) ?? []).map((item) => <MessageBubble key={item.id} message={item} />)}
-              {!messageQuery.data?.pages.some((page) => page.results.length) && <div className="chat-empty">As mensagens desta conversa aparecerão aqui.</div>}
+              {!messageQuery.data?.pages.some((page) => page.results.length) && !visibleSendPreview && <div className="chat-empty">As mensagens desta conversa aparecerão aqui.</div>}
             </>}
+            {visibleSendPreview && <div className="message-row message-outgoing" data-testid="send-preview"><div className={`message-bubble bubble-outgoing bubble-send-${visibleSendPreview.phase}`}><p>{visibleSendPreview.text}</p><span className="message-meta" role="status">{formatTime(visibleSendPreview.createdAt)} {visibleSendPreview.phase === "sending" ? <><LoaderCircle className="spin" size={12} /> Enviando…</> : visibleSendPreview.phase === "uncertain" ? "Resultado incerto" : "Não enviada"}</span></div></div>}
           </div>
-          <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea ref={composerRef} aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{sendFeedback && <small className="field-error" role="status">{sendFeedback} {pendingSendRef.current && <button type="button" onClick={() => void inspectSend()}>Consultar tentativa</button>}</small>}<button type="button" className="button button-secondary button-small" disabled={selected.status === "closed"} onClick={() => setTemplatesOpen(open => !open)}>Templates aprovados</button>{templatesOpen && <div className="settings-note">{templates.isPending ? "Consultando templates…" : templates.isError ? errorMessage(templates.error) : !templates.data?.consent_registered ? "Registre o consentimento de retorno no contato antes de enviar template." : templates.data.templates.length ? templates.data.templates.map(template => <div key={`${template.name}-${template.language}`}><p>{template.body}</p><button type="button" className="button button-secondary button-small" disabled={templateSend.isPending} onClick={() => submitTemplate(template.name, template.language)}>Enviar {template.name}</button></div>) : "Nenhum template de utilidade aprovado e sem variáveis foi encontrado nesta conta Meta."}</div>}</form>
+          <form className="message-composer" onSubmit={sendForm}>
+            <div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div>
+            <div className="composer-row">
+              <textarea ref={composerRef} aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); } }} />
+              <button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || sendBlocked}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button>
+            </div>
+            {sendBlocked && pendingSendRef.current && pendingSendRef.current.conversationId !== selectedId && <small className="send-blocked-note" role="status">Há um envio em andamento em outra conversa. Aguarde ou volte a ela para consultar a tentativa.</small>}
+            {sendFeedback && sendFeedbackConversationId === selectedId && <small className="field-error" role="status">{sendFeedback} {pendingSendRef.current && unresolvedSend && <button type="button" disabled={inspectingSend} onClick={() => void inspectSend()}>{inspectingSend ? "Consultando…" : "Consultar tentativa"}</button>} {retryAvailable && <button type="button" onClick={retrySend}>Repetir tentativa</button>}</small>}
+            <button type="button" className="button button-secondary button-small" disabled={selected.status === "closed"} onClick={() => setTemplatesOpen(open => !open)}>Templates aprovados</button>
+            {templatesOpen && <div className="settings-note">{templates.isPending ? "Consultando templates…" : templates.isError ? errorMessage(templates.error) : !templates.data?.consent_registered ? "Registre o consentimento de retorno no contato antes de enviar template." : templates.data.templates.length ? templates.data.templates.map(template => <div key={`${template.name}-${template.language}`}><p>{template.body}</p><button type="button" className="button button-secondary button-small" disabled={templateSend.isPending || sendBlocked} onClick={() => submitTemplate(template.name, template.language)}>Enviar {template.name}</button></div>) : "Nenhum template de utilidade aprovado e sem variáveis foi encontrado nesta conta Meta."}</div>}
+          </form>
         </section> : <section className="chat-panel panel chat-no-selection">{conversationDetail.isError && selectedId ? <ErrorNotice error={conversationDetail.error} retry={() => void conversationDetail.refetch()} /> : <Empty icon={MessageCircle} title="Escolha uma conversa" text="Selecione uma conversa à esquerda para ver as mensagens e iniciar o atendimento." />}</section>}
         {selected && <aside className="contact-panel panel"><div className="contact-panel-title"><h2>Detalhes</h2></div><div className="contact-profile"><span className="contact-avatar contact-avatar-large">{(selected.contact.name || selected.contact.phone || "?").slice(0, 1).toUpperCase()}</span><strong>{selected.contact.name || formatPhone(selected.contact.phone || selected.contact.wa_id)}</strong><span>{formatPhone(selected.contact.phone || selected.contact.wa_id)}</span><Badge tone={selected.status === "closed" ? "neutral" : "brand"}>{statusLabel[selected.status]}</Badge></div>
           <div className="detail-section sales-analysis"><span className="detail-label">ANÁLISE COMERCIAL DA IA</span><div className="analysis-score"><span className={`temperature-pill temperature-${selected.lead_temperature ?? "unknown"}`}>{temperatureLabel[selected.lead_temperature ?? "unknown"]}</span><strong>{selected.purchase_intent_score ?? 0}%</strong></div>{selected.analysis_summary && <p>{selected.analysis_summary}</p>}{(selected.buying_signals ?? []).length > 0 && <div><small>Sinais de compra</small><ul>{(selected.buying_signals ?? []).map((signal) => <li key={signal}>{signal}</li>)}</ul></div>}{(selected.objections ?? []).length > 0 && <div><small>Objeções</small><ul>{(selected.objections ?? []).map((objection) => <li key={objection}>{objection}</li>)}</ul></div>}{selected.recommended_action && <div className="recommended-action"><Target size={13} /><span>{selected.recommended_action}</span></div>}<button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "analyze" })}><RefreshCw size={13} /> Reanalisar</button></div>

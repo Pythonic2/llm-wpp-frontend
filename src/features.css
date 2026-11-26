@@ -521,6 +521,14 @@
   color: #6573dc;
 }
 
+.bubble-send-sending { opacity: .78; }
+.bubble-send-uncertain { border-color: #e8c48d; background: #fff8ed; }
+.bubble-send-failed { border-color: #e8b5b2; background: #fff2f1; }
+.bubble-send-uncertain .message-meta { color: #9a671e; }
+.bubble-send-failed .message-meta { color: #b64b47; }
+.message-meta[role="status"] { display: flex; align-items: center; gap: 4px; }
+.send-blocked-note { display: block; margin: 7px 0; color: #7c859b; font-size: 9px; }
+
 .message-attachment {
   display: flex;
   align-items: center;

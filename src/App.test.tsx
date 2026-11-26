@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError } from "axios";
 import App from "./App";
 import * as api from "./api";
 import type { Company, Dashboard, Message, Session } from "./types";
@@ -33,6 +34,7 @@ vi.mock("./api", async () => {
     conversationAction: vi.fn(),
     updateConversation: vi.fn(),
     sendMessage: vi.fn(),
+    getMessageAttempt: vi.fn(),
     listMembers: vi.fn(),
     removeMember: vi.fn(),
     listNumbers: vi.fn(),
@@ -402,6 +404,196 @@ describe("Gest Tech protected app", () => {
     fireEvent.click(button);
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
     await waitFor(() => expect(composer).toHaveFocus());
+  });
+
+  it("shows a sending bubble immediately and preserves the next draft when the API responds", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    let saved: Message | null = null;
+    vi.mocked(api.listMessages).mockImplementation(async () => ({ count: saved ? 1 : 0, next: null, previous: null, results: saved ? [saved] : [] }));
+    let resolveSend!: (message: Message) => void;
+    vi.mocked(api.sendMessage).mockImplementation(() => new Promise<Message>((resolve) => { resolveSend = resolve; }));
+    renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    await screen.findByText("As mensagens desta conversa aparecerão aqui.");
+    fireEvent.change(composer, { target: { value: "Olá, posso ajudar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    expect(screen.getByTestId("send-preview")).toHaveTextContent("Olá, posso ajudar");
+    expect(screen.getByTestId("send-preview")).toHaveTextContent("Enviando…");
+    expect(composer).toHaveValue("");
+    expect(composer).not.toBeDisabled();
+    expect(composer).toHaveFocus();
+    fireEvent.change(composer, { target: { value: "Próxima pergunta" } });
+    expect(screen.getByRole("button", { name: /Enviando/ })).toBeDisabled();
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+
+    saved = {
+      id: 52, external_id: "wamid-sent", direction: "out", message_type: "text",
+      text: "Olá, posso ajudar", status: "sent", ai_status: "na", response_to: null,
+      created_at: "2026-01-01T12:05:00Z",
+    };
+    await act(async () => { resolveSend(saved!); });
+
+    await waitFor(() => expect(screen.queryByTestId("send-preview")).not.toBeInTheDocument());
+    expect(screen.getAllByText("Olá, posso ajudar")).toHaveLength(1);
+    expect(screen.getByText("Enviada")).toBeInTheDocument();
+    expect(composer).toHaveValue("Próxima pergunta");
+    expect(screen.getByRole("button", { name: "Enviar" })).not.toBeDisabled();
+  });
+
+  it("shows a definitive failure without erasing a new draft", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    let saved: Message | null = null;
+    vi.mocked(api.listMessages).mockImplementation(async () => ({ count: saved ? 1 : 0, next: null, previous: null, results: saved ? [saved] : [] }));
+    let rejectSend!: (error: unknown) => void;
+    vi.mocked(api.sendMessage).mockImplementation(() => new Promise<Message>((_resolve, reject) => { rejectSend = reject; }));
+    renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: "Mensagem que falhou" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    fireEvent.change(composer, { target: { value: "Novo rascunho" } });
+    saved = {
+      id: 52, external_id: "manual-pending:52", direction: "out", message_type: "text",
+      text: "Mensagem que falhou", status: "failed", ai_status: "na", response_to: null,
+      created_at: "2026-01-01T12:05:00Z",
+    };
+    const error = Object.assign(new AxiosError("Falha no WhatsApp"), {
+      response: { status: 502, data: { detail: "Envio rejeitado", message: saved } },
+    });
+    await act(async () => { rejectSend(error); });
+
+    await waitFor(() => expect(screen.queryByTestId("send-preview")).not.toBeInTheDocument());
+    expect(screen.getAllByText("Mensagem que falhou")).toHaveLength(1);
+    expect(screen.getByText("Falhou")).toBeInTheDocument();
+    expect(composer).toHaveValue("Novo rascunho");
+    expect(screen.getByRole("button", { name: "Enviar" })).not.toBeDisabled();
+  });
+
+  it("restores the sent text after a definitive rejection when no new draft exists", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    vi.mocked(api.sendMessage).mockRejectedValue(Object.assign(new AxiosError("Conversa encerrada"), {
+      response: { status: 409, data: { detail: "Conversa encerrada" } },
+    }));
+    renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: "Texto recuperável" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(screen.getByTestId("send-preview")).toHaveTextContent("Não enviada"));
+    expect(composer).toHaveValue("Texto recuperável");
+    expect(screen.getByRole("button", { name: "Enviar" })).not.toBeDisabled();
+  });
+
+  it("keeps an uncertain attempt blocked and retries only with the same key after lookup", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    let saved: Message | null = null;
+    vi.mocked(api.listMessages).mockImplementation(async () => ({ count: saved ? 1 : 0, next: null, previous: null, results: saved ? [saved] : [] }));
+    let rejectSend!: (error: unknown) => void;
+    vi.mocked(api.sendMessage)
+      .mockImplementationOnce(() => new Promise<Message>((_resolve, reject) => { rejectSend = reject; }))
+      .mockImplementationOnce(async () => {
+        saved = {
+          id: 52, external_id: "wamid-retried", direction: "out", message_type: "text",
+          text: "Mensagem incerta", status: "sent", ai_status: "na", response_to: null,
+          created_at: "2026-01-01T12:05:00Z",
+        };
+        return saved;
+      });
+    vi.mocked(api.getMessageAttempt).mockRejectedValue(Object.assign(new AxiosError("Não encontrada"), {
+      response: { status: 404, data: { detail: "Não encontrada" } },
+    }));
+    renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: "Mensagem incerta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    await act(async () => { rejectSend(new Error("Conexão caiu")); });
+
+    expect(screen.getByTestId("send-preview")).toHaveTextContent("Resultado incerto");
+    fireEvent.change(composer, { target: { value: "Outro rascunho" } });
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Consultar tentativa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Repetir tentativa" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2));
+    const firstKey = vi.mocked(api.sendMessage).mock.calls[0]?.[3];
+    expect(vi.mocked(api.sendMessage).mock.calls[1]?.[3]).toBe(firstKey);
+    expect(composer).toHaveValue("Outro rascunho");
+    expect(await screen.findByText("Enviada")).toBeInTheDocument();
+  });
+
+  it("unblocks the composer when polling confirms a pending message was sent", async () => {
+    const conversation = await api.getConversation(company.id, 7);
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 1, next: null, previous: null, results: [conversation] });
+    const pending: Message = {
+      id: 52, external_id: "manual-pending:52", direction: "out", message_type: "text",
+      text: "Mensagem pendente", status: "pending", ai_status: "na", response_to: null,
+      created_at: "2026-01-01T12:05:00Z",
+    };
+    let serverMessage = pending;
+    vi.mocked(api.listMessages).mockImplementation(async () => ({ count: 1, next: null, previous: null, results: [serverMessage] }));
+    vi.mocked(api.sendMessage).mockResolvedValue(pending);
+    const { client } = renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: pending.text } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(screen.getByText("Pendente")).toBeInTheDocument());
+    fireEvent.change(composer, { target: { value: "Próximo rascunho" } });
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+
+    serverMessage = { ...pending, external_id: "wamid-confirmed", status: "sent" };
+    await act(async () => { await client.invalidateQueries({ queryKey: ["messages", company.id, 7] }); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Enviar" })).not.toBeDisabled());
+    expect(screen.getAllByText(pending.text)).toHaveLength(1);
+    expect(composer).toHaveValue("Próximo rascunho");
+  });
+
+  it("keeps drafts and the pending bubble in their original conversation", async () => {
+    const first = await api.getConversation(company.id, 7);
+    const second = { ...first, id: 8, contact: { ...first.contact, name: "João" } };
+    vi.mocked(api.listConversations).mockResolvedValue({ count: 2, next: null, previous: null, results: [first, second] });
+    vi.mocked(api.getConversation).mockImplementation(async (_companyId, id) => id === 8 ? second : first);
+    let saved: Message | null = null;
+    vi.mocked(api.listMessages).mockImplementation(async (_companyId, id) => ({
+      count: id === 7 && saved ? 1 : 0, next: null, previous: null,
+      results: id === 7 && saved ? [saved] : [],
+    }));
+    let resolveSend!: (message: Message) => void;
+    vi.mocked(api.sendMessage).mockImplementation(() => new Promise<Message>((resolve) => { resolveSend = resolve; }));
+    renderApp("/inbox?conversation=7");
+
+    const composer = await screen.findByLabelText("Escreva uma mensagem");
+    fireEvent.change(composer, { target: { value: "Mensagem para Maria" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    fireEvent.change(composer, { target: { value: "Rascunho para Maria" } });
+    fireEvent.click(screen.getByRole("button", { name: /João/ }));
+
+    expect(screen.queryByTestId("send-preview")).not.toBeInTheDocument();
+    expect(composer).toHaveValue("");
+    expect(screen.getByText(/Há um envio em andamento em outra conversa/)).toBeInTheDocument();
+    fireEvent.change(composer, { target: { value: "Rascunho para João" } });
+    saved = {
+      id: 52, external_id: "wamid-maria", direction: "out", message_type: "text",
+      text: "Mensagem para Maria", status: "sent", ai_status: "na", response_to: null,
+      created_at: "2026-01-01T12:05:00Z",
+    };
+    await act(async () => { resolveSend(saved!); });
+    expect(api.sendMessage).toHaveBeenCalledWith(company.id, 7, "Mensagem para Maria", expect.any(String));
+    expect(composer).toHaveValue("Rascunho para João");
+    fireEvent.click(screen.getByRole("button", { name: /Maria/ }));
+    expect(composer).toHaveValue("Rascunho para Maria");
+    expect(await screen.findByText("Mensagem para Maria")).toBeInTheDocument();
+    expect(screen.queryByTestId("send-preview")).not.toBeInTheDocument();
   });
 
   it("opens chats at the newest message and follows updates only near the bottom", async () => {
