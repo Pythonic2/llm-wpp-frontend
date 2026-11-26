@@ -2,10 +2,10 @@
 
 ## Evidências e objetivo
 
-- Em 26/11/2026, `/login` carrega no domínio `crm.gestcloud.com.br`, mas `/api/v1/auth/csrf/` nesse domínio retorna 502 pela Cloudflare e `/inbox` mostra erro de origem.
+- Em 26/11/2026, `/login` carrega no domínio `crm.gestcloud.com.br`, mas `/api/v1/auth/csrf/` nesse domínio retorna 502 pela Cloudflare e `/inbox` mostra erro de origem. O log do Nginx confirma `connect() failed (111: Connection refused)` ao tentar `192.168.0.6:8123` nessa rota.
 - O endpoint de CSRF no domínio direto `llm-wpp.gestcloud.com.br` abre. A rota do túnel aponta o CRM para `front-saas-frontend-1:80` e o backend para `saas-backend-1:8123`.
-- O Nginx do frontend ainda encaminha `/api/` ao IP antigo `192.168.0.6:8123`. O host atual do backend é `ubuntu.local`; as duas stacks participam da rede Docker externa `pi_default`.
-- Objetivo: encaminhar a API do CRM ao backend atual pela rede Docker sem depender do IP antigo nem da resolução mDNS de `ubuntu.local` no container.
+- O Nginx do frontend ainda encaminha `/api/` ao IP antigo `192.168.0.6:8123`. O usuário informou que o host atual do backend é `ubuntu.local`. A rede Docker do frontend não comprova que o backend esteja no mesmo host ou que o nome do container seja acessível entre eles.
+- Objetivo: encaminhar a API do CRM ao host atual `ubuntu.local:8123`, sem depender do IP antigo.
 
 ## Cenários e critérios de aceitação
 
@@ -24,7 +24,7 @@
 
 | Critério | Verificação local | Verificação após publicação |
 | --- | --- | --- |
-| 1 | Destino Nginx e rede Compose | GET público de `/api/v1/auth/csrf/` sem 502 |
+| 1 | Destino Nginx e sintaxe do proxy | Resolver `ubuntu.local` e testar TCP 8123 a partir do container; GET público de `/api/v1/auth/csrf/` sem 502 |
 | 2 | Resolução DNS do Nginx em tempo de execução | Abrir `/login` durante indisponibilidade controlada do backend, se houver janela |
 | 3 | Revisão dos cabeçalhos; confirmar `CSRF_TRUSTED_ORIGINS` para CRM e acesso local | Login manual com conta de teste e abertura de `/inbox` |
 | 4 | `docker compose config`, `npm test`, lint e build; `nginx -t` quando disponível | Verificar logs do Nginx e do backend |

@@ -31,7 +31,7 @@ No servidor, a stack usa a imagem versionada indicada em `docker-compose.yml`:
 docker compose up -d
 ```
 
-O Compose serve a imagem de produção por Nginx na porta 80 do container e publica a porta 8080 do host. Abra `http://IP-DO-SERVIDOR:8080`. O Nginx encaminha `/api/` ao container `saas-backend-1:8123` pela rede externa `pi_default`; as duas stacks precisam estar conectadas à mesma rede Docker. O host do backend na rede local é `ubuntu.local`. Alterações locais em `nginx.conf` só entram na stack após gerar e publicar uma nova imagem versionada e atualizar sua tag no Compose/Portainer.
+O Compose serve a imagem de produção por Nginx na porta 80 do container e publica a porta 8080 do host. Abra `http://IP-DO-SERVIDOR:8080`. O Nginx encaminha `/api/` ao backend em `ubuntu.local:8123`. O container do frontend precisa resolver `ubuntu.local` e alcançar a porta 8123 na rede local; estar na rede Docker `pi_default` por si só não garante esse acesso. Alterações locais em `nginx.conf` só entram na stack após gerar e publicar uma nova imagem versionada e atualizar sua tag no Compose/Portainer.
 
 ## Qualidade
 
