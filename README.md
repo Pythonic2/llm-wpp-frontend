@@ -12,7 +12,7 @@ npm ci
 npm run dev
 ```
 
-O endereço padrão da API é `/api/v1`, encaminhado pelo Nginx de produção ao backend publicado em `192.168.0.6:8123`. No desenvolvimento com Vite, configure `VITE_API_BASE_URL=http://192.168.0.6:8123/api/v1`. Nesse caso, o servidor Django deve permitir a origem do Vite em `FRONTEND_ORIGINS` e configurar `CSRF_TRUSTED_ORIGINS` a partir da mesma variável.
+O endereço padrão da API é `/api/v1`, encaminhado pelo Nginx de produção ao backend pela rede Docker `pi_default`. No desenvolvimento com Vite, configure `VITE_API_BASE_URL=http://ubuntu.local:8123/api/v1`. Nesse caso, o servidor Django deve permitir a origem do Vite em `FRONTEND_ORIGINS` e configurar `CSRF_TRUSTED_ORIGINS` a partir da mesma variável.
 
 Também é possível iniciar frontend e backend juntos usando o Compose do backend:
 
@@ -25,13 +25,13 @@ Abra `http://localhost:5173`. O PostgreSQL, Redis, backend e worker são gerenci
 
 ## Publicar o frontend com Docker Compose
 
-No servidor, implante este projeto pelo Portainer ou copie-o e execute:
+No servidor, a stack usa a imagem versionada indicada em `docker-compose.yml`:
 
 ```bash
-docker compose up --build -d
+docker compose up -d
 ```
 
-O Compose constrói a versão de produção, servida por Nginx na porta 80 do container e publicada na porta 8080 do host. Abra `http://IP-DO-SERVIDOR:8080`. O Nginx encaminha `/api/` ao backend publicado em `192.168.0.6:8123`, inclusive quando frontend e backend estão em endpoints ou stacks diferentes no Portainer.
+O Compose serve a imagem de produção por Nginx na porta 80 do container e publica a porta 8080 do host. Abra `http://IP-DO-SERVIDOR:8080`. O Nginx encaminha `/api/` ao container `saas-backend-1:8123` pela rede externa `pi_default`; as duas stacks precisam estar conectadas à mesma rede Docker. O host do backend na rede local é `ubuntu.local`. Alterações locais em `nginx.conf` só entram na stack após gerar e publicar uma nova imagem versionada e atualizar sua tag no Compose/Portainer.
 
 ## Qualidade
 
