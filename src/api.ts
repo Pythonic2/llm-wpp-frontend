@@ -243,7 +243,7 @@ export async function downloadMessageAttachment(url: string, filename: string): 
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
-function idempotencyKey(): string {
+export function idempotencyKey(): string {
   const bytes = new Uint8Array(16);
 
   if (typeof globalThis.crypto?.getRandomValues === "function") {
@@ -263,13 +263,53 @@ function idempotencyKey(): string {
   return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
-export async function sendMessage(companyId: string, conversationId: number, text: string): Promise<Message> {
-  const config: AxiosRequestConfig = { headers: { "Idempotency-Key": idempotencyKey() } };
+export async function sendMessage(companyId: string, conversationId: number, text: string, key = idempotencyKey()): Promise<Message> {
+  const config: AxiosRequestConfig = { headers: { "Idempotency-Key": key } };
   const { data } = await http.post<Message>(
     companyPath(companyId, `conversations/${conversationId}/messages/`),
     { text },
     config,
   );
+  return data;
+}
+
+export async function getMessageAttempt(companyId: string, conversationId: number, key: string): Promise<Message> {
+  const { data } = await http.get<Message>(companyPath(companyId, `conversations/${conversationId}/messages/attempt/`), { params: { key } });
+  return data;
+}
+
+export async function listConversationTemplates(companyId: string, conversationId: number) {
+  const { data } = await http.get<{
+    templates: Array<{ name: string; language: string; body: string }>;
+    consent_registered: boolean;
+  }>(companyPath(companyId, `conversations/${conversationId}/templates/`));
+  return data;
+}
+
+export async function sendConversationTemplate(companyId: string, conversationId: number, name: string, language: string, key: string) {
+  const { data } = await http.post<Message>(
+    companyPath(companyId, `conversations/${conversationId}/templates/`),
+    { name, language }, { headers: { "Idempotency-Key": key } },
+  );
+  return data;
+}
+
+export async function previewAI(companyId: string, question: string) {
+  const { data } = await http.post<{
+    answer: string;
+    sources: Array<{ document_id: number; document_name: string; distance: number; excerpt: string }>;
+    insufficient_context: boolean;
+    sent_to_whatsapp: false;
+  }>(companyPath(companyId, "ai/preview/"), { question, business_unit_id: selectedBusinessUnit(companyId) });
+  return data;
+}
+
+export async function getAIUsage(companyId: string, days = 30) {
+  const { data } = await http.get<{
+    days: number; calls: number; input_tokens: number; output_tokens: number;
+    total_tokens: number; estimated_cost_usd: string;
+    by_purpose: Array<{ purpose: string; calls: number; total_tokens: number; estimated_cost_usd: string }>;
+  }>(companyPath(companyId, "ai/usage/"), { params: { days } });
   return data;
 }
 
@@ -592,7 +632,12 @@ export async function listOrders(companyId: string, status = "") {
   return data;
 }
 
-export async function decideOrder(companyId: string, orderId: string, action: "approve" | "reject") {
+export async function getOrder(companyId: string, orderId: string) {
+  const { data } = await http.get<Order>(companyPath(companyId, `orders/${orderId}/`));
+  return data;
+}
+
+export async function decideOrder(companyId: string, orderId: string, action: "approve" | "reject" | "notify") {
   const { data } = await http.post<Order>(companyPath(companyId, `orders/${orderId}/${action}/`));
   return data;
 }

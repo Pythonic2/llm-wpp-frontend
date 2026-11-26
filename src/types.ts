@@ -108,6 +108,10 @@ export interface Dashboard {
   outbound_messages: number;
   documents_processing: number;
   documents_failed: number;
+  failed_outbound_messages?: number;
+  failed_ai_messages?: number;
+  orders_needing_attention?: number;
+  operational_alerts?: Array<{ kind: "outbound_failed" | "ai_failed"; conversation_id: number; contact_name: string }>;
   hot_leads?: number;
   warm_leads?: number;
   follow_ups_due?: number;
@@ -188,6 +192,9 @@ export interface WhatsAppNumber {
   pause_ai_on_app_echo?: boolean;
   connected_at?: string | null;
   connection_error?: string;
+  last_inbound_at?: string | null;
+  last_outbound_at?: string | null;
+  outbound_failures_24h?: number;
   ai_enabled: boolean;
   is_active: boolean;
   created_at: string;
@@ -198,6 +205,7 @@ export interface Order {
   business_unit_id?: string | null;
   id: string;
   conversation: number;
+  contact_id: number;
   customer_name: string;
   customer_phone: string;
   status: OrderStatus;
@@ -208,6 +216,9 @@ export interface Order {
   summary: string;
   approved_by: User | null;
   decided_at: string | null;
+  customer_notice_status: "not_sent" | "sending" | "sent" | "failed" | "blocked" | "unknown";
+  customer_notice_error: string;
+  customer_notice_sent_at: string | null;
   created_at: string;
   updated_at: string;
 }

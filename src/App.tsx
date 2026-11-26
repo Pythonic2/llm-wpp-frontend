@@ -78,6 +78,8 @@ import {
   getCompany,
   getConversation,
   getDashboard,
+  getAIUsage,
+  getMessageAttempt,
   getNumber,
   getKnowledgeBase,
   getMediaAssetBlob,
@@ -86,6 +88,7 @@ import {
   listContacts,
   listCompanies,
   listConversations,
+  listConversationTemplates,
   listDocuments,
   listKnowledgeBases,
   listMediaAssets,
@@ -94,11 +97,14 @@ import {
   listMessages,
   listNumbers,
   login,
+  idempotencyKey,
+  previewAI,
   logout,
   reprocessDocument,
   refreshSession,
   removeMember,
   sendMessage,
+  sendConversationTemplate,
   setContactFollowUpConsent,
   updateContact,
   updateCompanyAIInstructions,
@@ -135,7 +141,7 @@ import type {
 import { formatDate, formatPhone, formatTime } from "./format";
 import { loadFacebookSdk, launchEmbeddedSignup } from "./facebookSignup";
 import { CatalogPage, SalesPage, FinancePage, CommercialSettings, CommercialSummary } from "./Commercial";
-import { LandingPage, SignupPage, CheckoutStatusPage, VerifyEmailPage, AddCompanyPage, ExtraNumberPurchase } from "./Billing";
+import { LandingPage, SignupPage, CheckoutStatusPage, VerifyEmailPage, AddCompanyPage, ExtraNumberPurchase, SubscriptionsPage } from "./Billing";
 import { TeamInviteAcceptPage } from "./TeamInvite";
 import { DocumentShareControl, UnitManager, UnitSwitcher } from "./BusinessUnits";
 import { listBusinessUnits, unitsKey } from "./businessUnitsApi";
@@ -383,7 +389,7 @@ function CompanyPicker() {
             ))}
           </div>
         ) : (
-          <Empty icon={Building2} title="Nenhuma empresa ativa" text="Peça ao administrador para conferir seu acesso e verificar se a assinatura da empresa está ativa." />
+          <><Empty icon={Building2} title="Nenhuma empresa ativa" text="Peça ao administrador para conferir seu acesso e verificar se a assinatura da empresa está ativa." /><Link className="button button-secondary" to="/billing/subscriptions">Consultar minhas assinaturas</Link></>
         )}
       </div>
     </main>
@@ -506,6 +512,12 @@ function DashboardPage() {
       <section className="stat-grid">{cards.map(({ label, value, icon: Icon, tone }) => (
         <article className="stat-card" key={label}><span className={`stat-icon stat-${tone}`}><Icon size={19} /></span><span className="stat-label">{label}</span><strong className="stat-number">{value.toLocaleString("pt-BR")}</strong></article>
       ))}</section>
+      {roleCanManage(company?.role) && <OnboardingChecklist companyId={id} />}
+      <section className="panel recent-panel" aria-label="Pendências de atendimento"><div className="panel-heading"><div><h2>Precisa de atenção</h2><p>Falhas de entrega, respostas da IA e pedidos para conferir agora.</p></div></div>
+        <div className="commercial-metrics"><Link to="/orders"><span>Pedidos e avisos pendentes</span><strong>{data.orders_needing_attention ?? 0}</strong></Link><span>Mensagens que falharam<strong>{data.failed_outbound_messages ?? 0}</strong></span><span>Respostas da IA com falha<strong>{data.failed_ai_messages ?? 0}</strong></span></div>
+        {(data.operational_alerts ?? []).map((alert, index) => <Link className="recent-row" key={`${alert.kind}-${alert.conversation_id}-${index}`} to={`/inbox?conversation=${alert.conversation_id}`}><strong>{alert.contact_name}</strong><span>{alert.kind === "outbound_failed" ? "Mensagem não entregue" : "Resposta da IA falhou"}</span><ArrowRight size={14} /></Link>)}
+        {!data.orders_needing_attention && !(data.operational_alerts ?? []).length && <p className="settings-note">Nenhuma falha ou pedido pendente agora.</p>}
+      </section>
       <section className="panel warm-follow-up-summary" aria-label="Resumo dos contatos automáticos"><div><span className="eyebrow">RETOMADA AUTOMÁTICA</span><h2>A IA entrou em contato com {data.warm_follow_up_contacts_today ?? 0} {data.warm_follow_up_contacts_today === 1 ? "pessoa" : "pessoas"} hoje</h2><p>{data.warm_follow_up_delivered_today ?? 0} entregues · {data.warm_follow_up_replied_today ?? 0} responderam · {data.warm_follow_up_optouts_today ?? 0} descadastros · {data.warm_follow_up_failed_today ?? 0} falhas · {data.warm_follow_up_unknown_today ?? 0} incertos · {data.warm_follow_up_enabled ? "Automação ativa" : "Automação desativada"}</p></div>{(data.warm_follow_up_attempts ?? []).length > 0 && <div className="warm-follow-up-rows">{data.warm_follow_up_attempts?.map((attempt) => <Link key={attempt.id} to={`/inbox?conversation=${attempt.conversation_id}`}><strong>{attempt.contact_name}</strong><span>{attempt.status === "replied" ? "Respondeu" : attempt.status === "opted_out" ? "Descadastrou" : attempt.status === "sent" ? "Enviada" : attempt.status === "delivered" ? "Entregue" : attempt.status === "read" ? "Lida" : attempt.status === "failed" ? "Falhou" : attempt.status === "sending" ? "Enviando" : attempt.status === "unknown" ? "Estado incerto" : "Ignorada"} · {formatTime(attempt.created_at)}</span><ArrowRight size={14} /></Link>)}</div>}</section>
       {roleCanManage(company?.role) && <CommercialSummary companyId={id} />}
       <section className="dashboard-grid">
@@ -539,6 +551,21 @@ function DashboardPage() {
   );
 }
 
+function OnboardingChecklist({ companyId }: { companyId: string }) {
+  const company = useQuery({ queryKey: queryKeys.company(companyId), queryFn: () => getCompany(companyId) });
+  const numbers = useQuery({ queryKey: [...queryKeys.numbers(companyId), "onboarding"], queryFn: () => listNumbers(companyId, { page_size: 100 }) });
+  const bases = useQuery({ queryKey: ["knowledge-bases", companyId, "onboarding"], queryFn: () => listKnowledgeBases(companyId) });
+  const usage = useQuery({ queryKey: ["ai-usage", companyId, 90], queryFn: () => getAIUsage(companyId, 90) });
+  const steps = [
+    { label: "Conectar um número de WhatsApp", done: !!numbers.data?.results.some(number => number.is_active && number.connection_state !== "disconnected"), to: "/numbers" },
+    { label: "Definir o atendimento para vendas consultivas", done: !!company.data?.ai_instructions?.trim(), to: "/settings" },
+    { label: "Cadastrar respostas e materiais da empresa", done: !!bases.data?.results.length, to: "/knowledge" },
+    { label: "Testar perguntas reais antes de ligar a IA", done: !!usage.data?.by_purpose.some(item => item.purpose === "ai_preview"), to: "/settings" },
+  ];
+  if (steps.every(step => step.done)) return null;
+  return <section className="panel recent-panel" aria-label="Primeiros passos"><div className="panel-heading"><div><h2>Prepare seu atendimento</h2><p>Configure e confira a experiência antes de ativar respostas automáticas.</p></div></div>{steps.map(step => <Link className="recent-row" key={step.label} to={step.to}><span>{step.done ? "✓" : "○"} {step.label}</span><ArrowRight size={14} /></Link>)}</section>;
+}
+
 function pageNumberFromLink(link: string | null): number | undefined {
   if (!link) return undefined;
   const page = Number(new URL(link, apiOrigin).searchParams.get("page"));
@@ -568,6 +595,10 @@ function InboxPage() {
   const [hideClosed, setHideClosed] = useState(true);
   const [page, setPage] = useState(1);
   const [message, setMessage] = useState("");
+  const [sendFeedback, setSendFeedback] = useState("");
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const pendingTemplateRef = useRef<{ conversationId: number; name: string; language: string; key: string } | null>(null);
+  const pendingSendRef = useRef<{ conversationId: number; text: string; key: string } | null>(null);
   const [actionError, setActionError] = useState("");
   const filters = {
     search,
@@ -600,6 +631,12 @@ function InboxPage() {
     getNextPageParam: (page) => pageNumberFromLink(page.next),
     enabled: !!selectedId && !!companyId,
     refetchInterval: 5_000,
+  });
+  const templates = useQuery({
+    queryKey: ["conversation-templates", companyId, selectedId],
+    queryFn: () => listConversationTemplates(companyId, selectedId ?? 0),
+    enabled: templatesOpen && !!companyId && !!selectedId,
+    staleTime: 60_000,
   });
   useLayoutEffect(() => {
     const element = messageListRef.current;
@@ -643,10 +680,34 @@ function InboxPage() {
     onError: (error: unknown) => setActionError(errorMessage(error)),
   });
   const send = useMutation({
-    mutationFn: (text: string) => sendMessage(companyId, selectedId ?? 0, text),
-    onSuccess: () => { setMessage(""); followLatestRef.current = true; refreshConversation(); },
-    onError: () => refreshConversation(),
+    mutationFn: ({ text, key }: { text: string; key: string }) => sendMessage(companyId, selectedId ?? 0, text, key),
+    onSuccess: (result) => {
+      if (result.status === "pending") {
+        setSendFeedback("O resultado deste envio ainda é incerto. Consulte a tentativa antes de escrever outra mensagem.");
+      } else if (result.status === "failed") {
+        pendingSendRef.current = null;
+        setSendFeedback("O envio falhou. Confira a conversa e tente novamente.");
+      } else {
+        pendingSendRef.current = null;
+        setSendFeedback("");
+        setMessage("");
+      }
+      followLatestRef.current = true;
+      refreshConversation();
+    },
+    onError: (error: unknown) => { setSendFeedback(errorMessage(error)); refreshConversation(); },
     onSettled: () => setFocusAfterSendConversationId(sendingConversationIdRef.current),
+  });
+  const templateSend = useMutation({
+    mutationFn: ({ name, language, key }: { name: string; language: string; key: string }) =>
+      sendConversationTemplate(companyId, selectedId ?? 0, name, language, key),
+    onSuccess: result => {
+      if (result.status === "pending") setSendFeedback("Resultado do template incerto. Consulte a tentativa antes de reenviar.");
+      else if (result.status === "failed") { pendingTemplateRef.current = null; setSendFeedback("O template falhou. Verifique a conversa antes de tentar novamente."); }
+      else { pendingTemplateRef.current = null; setSendFeedback("Template enviado ao cliente."); setTemplatesOpen(false); }
+      refreshConversation();
+    },
+    onError: error => { setSendFeedback(errorMessage(error)); refreshConversation(); },
   });
   useEffect(() => {
     if (send.isPending || focusAfterSendConversationId === null) return;
@@ -659,7 +720,40 @@ function InboxPage() {
   const submitMessage = () => {
     if (!message.trim() || !selected || selected.status === "closed" || send.isPending) return;
     sendingConversationIdRef.current = selected.id;
-    send.mutate(message.trim());
+    const text = message.trim();
+    if (!pendingSendRef.current || pendingSendRef.current.conversationId !== selected.id || pendingSendRef.current.text !== text) {
+      pendingSendRef.current = { conversationId: selected.id, text, key: idempotencyKey() };
+    }
+    setSendFeedback("");
+    send.mutate({ text, key: pendingSendRef.current.key });
+  };
+  const inspectSend = async () => {
+    const attempt = pendingSendRef.current;
+    if (!attempt) return;
+    try {
+      const result = await getMessageAttempt(companyId, attempt.conversationId, attempt.key);
+      if (result.status === "sent" || result.status === "delivered" || result.status === "read") {
+        pendingSendRef.current = null;
+        setMessage("");
+        setSendFeedback("Mensagem enviada. A conversa foi atualizada.");
+      } else if (result.status === "failed") {
+        pendingSendRef.current = null;
+        setSendFeedback("O envio falhou. Você pode tentar novamente.");
+      } else {
+        setSendFeedback("O envio ainda está pendente. Verifique novamente antes de reenviar.");
+      }
+      refreshConversation();
+    } catch (error) {
+      setSendFeedback(errorMessage(error));
+    }
+  };
+  const submitTemplate = (name: string, language: string) => {
+    if (!selectedId || templateSend.isPending) return;
+    if (!pendingTemplateRef.current || pendingTemplateRef.current.conversationId !== selectedId || pendingTemplateRef.current.name !== name || pendingTemplateRef.current.language !== language) {
+      pendingTemplateRef.current = { conversationId: selectedId, name, language, key: idempotencyKey() };
+    }
+    setSendFeedback("");
+    templateSend.mutate(pendingTemplateRef.current);
   };
   const members = useQuery({ queryKey: queryKeys.members(companyId), queryFn: () => listMembers(companyId), enabled: !!companyId });
   const numbers = useQuery({
@@ -730,7 +824,7 @@ function InboxPage() {
               {!messageQuery.data?.pages.some((page) => page.results.length) && <div className="chat-empty">As mensagens desta conversa aparecerão aqui.</div>}
             </>}
           </div>
-          <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea ref={composerRef} aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{send.isError && <small className="field-error">{errorMessage(send.error)}</small>}</form>
+          <form className="message-composer" onSubmit={sendForm}><div className="composer-hint"><Sparkles size={13} /> {selected.status === "closed" ? "Reabra a conversa para enviar mensagens" : selected.ai_paused ? "Atendimento humano · a IA está pausada" : "Sua mensagem será enviada pelo WhatsApp e pausará a IA"}</div><div className="composer-row"><textarea ref={composerRef} aria-label="Escreva uma mensagem" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" rows={2} disabled={selected.status === "closed" || send.isPending} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessage(); } }} /><button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || send.isPending}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button></div>{sendFeedback && <small className="field-error" role="status">{sendFeedback} {pendingSendRef.current && <button type="button" onClick={() => void inspectSend()}>Consultar tentativa</button>}</small>}<button type="button" className="button button-secondary button-small" disabled={selected.status === "closed"} onClick={() => setTemplatesOpen(open => !open)}>Templates aprovados</button>{templatesOpen && <div className="settings-note">{templates.isPending ? "Consultando templates…" : templates.isError ? errorMessage(templates.error) : !templates.data?.consent_registered ? "Registre o consentimento de retorno no contato antes de enviar template." : templates.data.templates.length ? templates.data.templates.map(template => <div key={`${template.name}-${template.language}`}><p>{template.body}</p><button type="button" className="button button-secondary button-small" disabled={templateSend.isPending} onClick={() => submitTemplate(template.name, template.language)}>Enviar {template.name}</button></div>) : "Nenhum template de utilidade aprovado e sem variáveis foi encontrado nesta conta Meta."}</div>}</form>
         </section> : <section className="chat-panel panel chat-no-selection">{conversationDetail.isError && selectedId ? <ErrorNotice error={conversationDetail.error} retry={() => void conversationDetail.refetch()} /> : <Empty icon={MessageCircle} title="Escolha uma conversa" text="Selecione uma conversa à esquerda para ver as mensagens e iniciar o atendimento." />}</section>}
         {selected && <aside className="contact-panel panel"><div className="contact-panel-title"><h2>Detalhes</h2></div><div className="contact-profile"><span className="contact-avatar contact-avatar-large">{(selected.contact.name || selected.contact.phone || "?").slice(0, 1).toUpperCase()}</span><strong>{selected.contact.name || formatPhone(selected.contact.phone || selected.contact.wa_id)}</strong><span>{formatPhone(selected.contact.phone || selected.contact.wa_id)}</span><Badge tone={selected.status === "closed" ? "neutral" : "brand"}>{statusLabel[selected.status]}</Badge></div>
           <div className="detail-section sales-analysis"><span className="detail-label">ANÁLISE COMERCIAL DA IA</span><div className="analysis-score"><span className={`temperature-pill temperature-${selected.lead_temperature ?? "unknown"}`}>{temperatureLabel[selected.lead_temperature ?? "unknown"]}</span><strong>{selected.purchase_intent_score ?? 0}%</strong></div>{selected.analysis_summary && <p>{selected.analysis_summary}</p>}{(selected.buying_signals ?? []).length > 0 && <div><small>Sinais de compra</small><ul>{(selected.buying_signals ?? []).map((signal) => <li key={signal}>{signal}</li>)}</ul></div>}{(selected.objections ?? []).length > 0 && <div><small>Objeções</small><ul>{(selected.objections ?? []).map((objection) => <li key={objection}>{objection}</li>)}</ul></div>}{selected.recommended_action && <div className="recommended-action"><Target size={13} /><span>{selected.recommended_action}</span></div>}<button className="button button-secondary button-small" disabled={action.isPending} onClick={() => action.mutate({ name: "analyze" })}><RefreshCw size={13} /> Reanalisar</button></div>
@@ -1312,7 +1406,7 @@ function NumbersPage() {
     {signupConfig.isError && canManage && <ErrorNotice error={signupConfig.error} retry={() => void signupConfig.refetch()} />}
     {formError && !createOpen && editingId === null && <div className="inline-error" role="alert">{formError}<button onClick={() => setFormError("")} aria-label="Fechar"><X size={14} /></button></div>}
     {query.isPending ? <Loading /> : query.isError ? <ErrorNotice error={query.error} retry={() => void query.refetch()} /> : query.data.results.length ? <>
-      <div className="number-grid">{query.data.results.map((number) => <article className="panel number-card" key={number.id}><div className="number-card-head"><span className="number-icon"><Smartphone size={20} /></span><span className="number-statuses"><Badge tone={number.is_active ? "green" : "neutral"}>{number.is_active ? "Ativo" : "Inativo"}</Badge><Badge tone={number.ai_enabled ? "brand" : "neutral"}>{number.ai_enabled ? "IA ativa" : "IA desativada"}</Badge></span></div><span className="eyebrow">NÚMERO CADASTRADO</span><h2>{number.display_phone_number}</h2><p>Atividade · {units.data?.results.find(unit => unit.id === number.business_unit_id)?.name || "Geral"}</p><p>ID do número · {number.phone_number_id}</p><p>Conta empresarial · {number.business_account_name || number.business_account_id || "Não informada"}</p><p>Integração · {number.connection_state === "syncing" ? "Sincronizando" : number.connection_state === "sync_failed" ? "Sincronização pendente" : number.connection_state === "history_declined" ? "Histórico não compartilhado" : number.connection_state === "disconnected" ? "Desconectada" : "Conectada"}</p><p>Última sincronização · {number.last_synced_at ? new Date(number.last_synced_at).toLocaleString("pt-BR") : "Ainda não disponível"}</p>{number.connection_error && <p role="alert">{number.connection_error}</p>}{canManage && <><div className="number-actions"><button className="button button-secondary button-small" onClick={() => openEdit(number)}>Detalhes e editar</button>{(number.connection_mode ?? "manual") === "manual" ? <button className="icon-button danger-icon" aria-label={`Excluir ${number.display_phone_number}`} disabled={remove.isPending} onClick={() => { void confirm({ title: "Excluir número manual?", description: `O número ${number.display_phone_number} será removido do cadastro. Conversas vinculadas podem impedir a exclusão.`, actionLabel: "Excluir número", eyebrow: "WHATSAPP" }).then(approved => { if (approved) remove.mutate(number.id); }); }}><X size={15} /></button> : number.connection_state !== "disconnected" ? <button className="button button-secondary button-small" disabled={disconnect.isPending} onClick={() => { void confirm({ title: "Desconectar WhatsApp?", description: `O número ${number.display_phone_number} será desconectado do Gest Tech. O histórico permanece. Na coexistência, a desconexão no aplicativo WhatsApp Business é uma etapa separada.`, actionLabel: "Desconectar", eyebrow: "WHATSAPP" }).then(approved => { if (approved) disconnect.mutate(number.id); }); }}>Desconectar</button> : <button className="button button-secondary button-small" onClick={startConnection}>Reconectar</button>}</div><div className="number-toggles">{number.connection_mode === "coexistence" && <Toggle label="Pausar IA após resposta no aplicativo" description="Evita respostas automáticas após um atendente responder no WhatsApp Business." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.pause_ai_on_app_echo ?? true} onChange={(enabled) => update.mutate({ id: number.id, input: { pause_ai_on_app_echo: enabled } })} />}<Toggle label="Número ativo" description="Recebe mensagens pelo webhook." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.is_active} onChange={(active) => update.mutate({ id: number.id, input: { is_active: active, ...(!active ? { ai_enabled: false } : {}) } })} /><Toggle label="Respostas da IA" description="Permite respostas automáticas com Gemini." disabled={update.isPending || !number.is_active || number.connection_state === "disconnected"} checked={number.ai_enabled} onChange={(enabled) => update.mutate({ id: number.id, input: { ai_enabled: enabled } })} /></div></>}</article>)}</div>
+      <div className="number-grid">{query.data.results.map((number) => <article className="panel number-card" key={number.id}><div className="number-card-head"><span className="number-icon"><Smartphone size={20} /></span><span className="number-statuses"><Badge tone={number.is_active ? "green" : "neutral"}>{number.is_active ? "Ativo" : "Inativo"}</Badge><Badge tone={number.ai_enabled ? "brand" : "neutral"}>{number.ai_enabled ? "IA ativa" : "IA desativada"}</Badge></span></div><span className="eyebrow">NÚMERO CADASTRADO</span><h2>{number.display_phone_number}</h2><p>Atividade · {units.data?.results.find(unit => unit.id === number.business_unit_id)?.name || "Geral"}</p><p>ID do número · {number.phone_number_id}</p><p>Conta empresarial · {number.business_account_name || number.business_account_id || "Não informada"}</p><p>Integração · {number.connection_state === "syncing" ? "Sincronizando" : number.connection_state === "sync_failed" ? "Sincronização pendente" : number.connection_state === "history_declined" ? "Histórico não compartilhado" : number.connection_state === "disconnected" ? "Desconectada" : "Conectada"}</p><p>Última sincronização · {number.last_synced_at ? new Date(number.last_synced_at).toLocaleString("pt-BR") : "Ainda não disponível"}</p><p>Última entrada · {number.last_inbound_at ? formatDate(number.last_inbound_at) : "Nenhuma mensagem recebida"}</p><p>Última saída · {number.last_outbound_at ? formatDate(number.last_outbound_at) : "Nenhuma mensagem enviada"}</p><p>Falhas de envio nas últimas 24h · {number.outbound_failures_24h ?? 0}</p>{number.connection_error && <p role="alert">{number.connection_error}</p>}{canManage && <><div className="number-actions"><button className="button button-secondary button-small" onClick={() => openEdit(number)}>Detalhes e editar</button>{(number.connection_mode ?? "manual") === "manual" ? <button className="icon-button danger-icon" aria-label={`Excluir ${number.display_phone_number}`} disabled={remove.isPending} onClick={() => { void confirm({ title: "Excluir número manual?", description: `O número ${number.display_phone_number} será removido do cadastro. Conversas vinculadas podem impedir a exclusão.`, actionLabel: "Excluir número", eyebrow: "WHATSAPP" }).then(approved => { if (approved) remove.mutate(number.id); }); }}><X size={15} /></button> : number.connection_state !== "disconnected" ? <button className="button button-secondary button-small" disabled={disconnect.isPending} onClick={() => { void confirm({ title: "Desconectar WhatsApp?", description: `O número ${number.display_phone_number} será desconectado do Gest Tech. O histórico permanece. Na coexistência, a desconexão no aplicativo WhatsApp Business é uma etapa separada.`, actionLabel: "Desconectar", eyebrow: "WHATSAPP" }).then(approved => { if (approved) disconnect.mutate(number.id); }); }}>Desconectar</button> : <button className="button button-secondary button-small" onClick={startConnection}>Reconectar</button>}</div><div className="number-toggles">{number.connection_mode === "coexistence" && <Toggle label="Pausar IA após resposta no aplicativo" description="Evita respostas automáticas após um atendente responder no WhatsApp Business." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.pause_ai_on_app_echo ?? true} onChange={(enabled) => update.mutate({ id: number.id, input: { pause_ai_on_app_echo: enabled } })} />}<Toggle label="Número ativo" description="Recebe mensagens pelo webhook." disabled={update.isPending || number.connection_state === "disconnected"} checked={number.is_active} onChange={(active) => update.mutate({ id: number.id, input: { is_active: active, ...(!active ? { ai_enabled: false } : {}) } })} /><Toggle label="Respostas da IA" description="Permite respostas automáticas com Gemini." disabled={update.isPending || !number.is_active || number.connection_state === "disconnected"} checked={number.ai_enabled} onChange={(enabled) => update.mutate({ id: number.id, input: { ai_enabled: enabled } })} /></div></>}</article>)}</div>
       <Pagination page={page} count={query.data.count} onPage={setPage} />
     </> : <div className="panel empty-panel"><Empty icon={Smartphone} title="Nenhum número cadastrado" text="Conecte um número pelo cadastro oficial da Meta para começar o atendimento." action={canManage ? <button className="button button-primary button-small" disabled={connect.isPending || !sdkReady || !signupConfig.data || !migrationConsent} onClick={startConnection}><Smartphone size={15} /> Conectar WhatsApp</button> : undefined} /></div>}
     {canManage && (createOpen || editingId !== null) && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeForm(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="number-modal-title"><div className="modal-heading"><div><span className="eyebrow">{createOpen || detail.data?.connection_mode === "manual" ? "CONFIGURAÇÃO MANUAL" : "INTEGRAÇÃO OFICIAL"}</span><h2 id="number-modal-title">{createOpen ? "Cadastrar número" : "Detalhes do número"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={closeForm}><X size={18} /></button></div>
@@ -1392,10 +1486,11 @@ function OrdersPage() {
     enabled: !!companyId,
   });
   const decision = useMutation({
-    mutationFn: ({ order, action }: { order: Order; action: "approve" | "reject" }) =>
+    mutationFn: ({ order, action }: { order: Order; action: "approve" | "reject" | "notify" }) =>
       decideOrder(companyId, order.id, action),
-    onSuccess: async () => {
-      setFeedback("Decisão registrada e comunicação ao cliente solicitada.");
+    onSuccess: async (result) => {
+      setFeedback(result.customer_notice_status === "sent" ? "Decisão registrada e cliente avisado." :
+        result.customer_notice_error || "Decisão registrada. Confira o estado do aviso ao cliente.");
       await queryClient.invalidateQueries({ queryKey: ["orders", companyId] });
     },
     onError: (error: unknown) => setFeedback(errorMessage(error)),
@@ -1412,7 +1507,10 @@ function OrdersPage() {
       <span className="eyebrow">PEDIDO {order.id.slice(0, 8).toUpperCase()}</span><h2>{order.customer_name || order.customer_phone}</h2>
       {order.items.map((item, index) => <p key={`${item.name}-${index}`}>{item.quantity || "Quantidade não informada"} · {item.name}</p>)}
       {order.total && <p><strong>R$ {order.total}</strong></p>}{order.requested_for && <p>Prazo: {order.requested_for}</p>}{order.summary && <p>{order.summary}</p>}
+      {order.status !== "awaiting_approval" && <p role="status">Aviso ao cliente: {order.customer_notice_status === "sent" ? "Enviado" : order.customer_notice_status === "blocked" ? "Aguardando nova janela de atendimento" : order.customer_notice_status === "failed" ? "Falhou" : order.customer_notice_status === "unknown" ? "Resultado incerto; confira a conversa" : order.customer_notice_status === "sending" ? "Enviando" : "Não enviado"}. {order.customer_notice_error}</p>}
       {canDecide && order.status === "awaiting_approval" && <div className="number-actions"><button className="button button-primary button-small" disabled={decision.isPending} onClick={() => decision.mutate({ order, action: "approve" })}><Check size={15} /> Aprovar</button><button className="button button-secondary button-small" disabled={decision.isPending} onClick={() => decision.mutate({ order, action: "reject" })}><X size={15} /> Rejeitar</button></div>}
+      {canDecide && ["approved", "rejected"].includes(order.status) && ["blocked", "failed", "not_sent"].includes(order.customer_notice_status) && <button className="button button-secondary button-small" disabled={decision.isPending} onClick={() => decision.mutate({ order, action: "notify" })}>Tentar avisar cliente</button>}
+      {canDecide && order.status === "approved" && <Link className="button button-secondary button-small" to={`/sales?order=${order.id}`}>Registrar venda deste pedido</Link>}
     </article>)}</div> : <div className="panel empty-panel"><Empty icon={ShoppingCart} title="Nenhum pedido neste status" text="Pedidos identificados pela IA aparecerão aqui para validação humana." /></div>}
   </div>;
 }
@@ -1422,9 +1520,11 @@ function SettingsPage() {
   const companyId = company?.id ?? "";
   const [copyFeedback, setCopyFeedback] = useState("");
   const [aiInstructions, setAiInstructions] = useState("");
+  const [previewQuestion, setPreviewQuestion] = useState("");
   const [promptFeedback, setPromptFeedback] = useState("");
   const [enableConfirmOpen, setEnableConfirmOpen] = useState(false);
   const query = useQuery({ queryKey: queryKeys.company(companyId), queryFn: () => getCompany(companyId), enabled: !!companyId });
+  const aiUsage = useQuery({ queryKey: ["ai-usage", companyId, 30], queryFn: () => getAIUsage(companyId), enabled: !!companyId });
   const queryClient = useQueryClient();
   useEffect(() => {
     if (query.data?.ai_instructions !== undefined) setAiInstructions(query.data.ai_instructions);
@@ -1436,6 +1536,10 @@ function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.company(companyId) });
     },
     onError: (error: unknown) => setPromptFeedback(errorMessage(error)),
+  });
+  const preview = useMutation({
+    mutationFn: () => previewAI(companyId, previewQuestion.trim()),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ai-usage", companyId] }),
   });
   const followUpToggle = useMutation({
     mutationFn: (enabled: boolean) => updateWarmFollowUpEnabled(companyId, enabled),
@@ -1458,17 +1562,20 @@ function SettingsPage() {
     <UnitManager companyId={companyId} canManage={roleCanManage(company?.role)} />
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Building2 size={18} /></span><div><h2>Dados da empresa</h2><p>Identificação do espaço de trabalho.</p></div></div><div className="settings-fields"><label>Nome da empresa<input value={data.name} readOnly /></label><label>Identificador<input value={data.slug} readOnly /></label><label>Papel do usuário<input value={roleLabel[company?.role ?? "agent"]} readOnly /></label><label>Usuário<input value={session.user.username} readOnly /></label><label>ID da empresa<input value={data.id} readOnly /></label><label>Desde<input value={formatDate(data.created_at)} readOnly /></label></div><div className="settings-note"><Shield size={16} /> Os dados cadastrais são gerenciados pelo administrador do sistema.</div></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><ShoppingCart size={18} /></span><div><h2>Perfil comercial</h2><p>Produtos, serviços e configurações financeiras opcionais.</p></div></div><Link className="button button-secondary" to="/commercial-settings">Abrir configurações comerciais</Link></section>
+    {company?.role === "owner" && <section className="panel settings-card"><h2>Assinatura do Gest Tech</h2><p>Consulte cobranças, vagas extras e a data de encerramento do período pago.</p><Link className="button button-secondary" to="/billing/subscriptions">Gerenciar assinatura</Link></section>}
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Integrações</h2><p>Conexões configuradas no servidor, sem exposição de credenciais.</p></div></div><div className="integration-row"><span className="integration-logo whats-logo"><MessageCircle size={19} /></span><span><strong>WhatsApp Cloud API</strong><small>Integração para envio e recebimento de mensagens.</small></span><Badge tone={data.integrations?.whatsapp_configured ? "green" : "peach"}>{data.integrations?.whatsapp_configured ? "Configurada" : "Pendente"}</Badge></div><div className="integration-row"><span className="integration-logo gemini-logo"><Sparkles size={19} /></span><span><strong>Google Gemini</strong><small>Geração de respostas e embeddings para busca RAG.</small></span><Badge tone={data.integrations?.gemini_configured ? "green" : "peach"}>{data.integrations?.gemini_configured ? "Configurada" : "Pendente"}</Badge></div></section>
+    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Uso da IA nos últimos 30 dias</h2><p>Consumo registrado para esta empresa.</p></div></div>{aiUsage.isPending ? <Loading /> : aiUsage.isError ? <ErrorNotice error={aiUsage.error} retry={() => void aiUsage.refetch()} /> : <><p>{aiUsage.data.calls} chamadas · {aiUsage.data.total_tokens.toLocaleString("pt-BR")} tokens · custo estimado US$ {Number(aiUsage.data.estimated_cost_usd).toFixed(4)}</p><p className="settings-note">A estimativa depende dos preços de modelo configurados no servidor; zero não significa uso gratuito.</p></>}</section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Target size={18} /></span><div><h2>Follow-up de conversas mornas</h2><p>Se o contato autorizou o retorno, a IA pode enviar uma mensagem após 20 horas sem resposta, das 9h às 18h (Brasília) e antes do limite de 24 horas do WhatsApp.</p></div></div><div className="warm-follow-up-setting"><span>Envio automático {data.warm_follow_up_enabled ? "ativado" : "desativado"}</span><button type="button" className={`button ${data.warm_follow_up_enabled ? "button-secondary" : "button-primary"}`} disabled={followUpToggle.isPending} onClick={() => data.warm_follow_up_enabled ? followUpToggle.mutate(false) : setEnableConfirmOpen(true)}>{data.warm_follow_up_enabled ? "Desativar" : "Ativar"}</button></div><p className="settings-note"><Shield size={16} /> Cada contato precisa ter consentimento registrado. O painel mostra pessoas contatadas, entregas e falhas; máximo de 20 envios por dia e um por contato a cada 7 dias.</p></section>
     {enableConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEnableConfirmOpen(false); }}><section className="modal-card warm-follow-up-confirm" role="dialog" aria-modal="true" aria-labelledby="warm-follow-up-confirm-title"><div className="modal-heading"><div><span className="eyebrow">AUTOMAÇÃO DE MENSAGENS</span><h2 id="warm-follow-up-confirm-title">Ativar follow-up automático?</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setEnableConfirmOpen(false)}><X size={18} /></button></div><p>A IA poderá enviar até 20 mensagens por dia a contatos com autorização registrada. Ela aguardará 20 horas sem resposta e respeitará o horário das 9h às 18h, em Brasília.</p><div className="modal-actions"><button type="button" className="button button-secondary" autoFocus onClick={() => setEnableConfirmOpen(false)}>Cancelar</button><button type="button" className="button button-primary" disabled={followUpToggle.isPending} onClick={() => followUpToggle.mutate(true)}>{followUpToggle.isPending ? "Ativando…" : "Confirmar ativação"}</button></div></section></div>}
-    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Personalidade da IA</h2><p>Defina como a IA deve atender os clientes desta empresa.</p></div></div><form className="ai-instructions-form" onSubmit={(event) => { event.preventDefault(); setPromptFeedback(""); if (aiInstructions.trim()) saveInstructions.mutate(); }}><label>Instruções de atendimento<textarea aria-label="Instruções de atendimento da IA" value={aiInstructions} maxLength={8000} rows={9} onChange={(event) => { setAiInstructions(event.target.value); setPromptFeedback(""); }} /><span className="prompt-counter">{aiInstructions.length}/8000 caracteres</span></label><div className="prompt-guidance"><strong>Como escrever um bom prompt</strong><p>Explique o papel da IA, o tipo de cliente, o tom de voz, os objetivos do atendimento e o que ela deve evitar. Não inclua senhas, tokens ou dados pessoais.</p><p>Você pode pedir a uma IA: “Crie instruções para um atendente virtual de [seu nicho], com tom [formal, acolhedor, urgente…], que deve [objetivos] e nunca deve [limites]”.</p></div><div className="prompt-actions"><button className="button button-secondary" type="button" onClick={() => { setAiInstructions(DEFAULT_AI_INSTRUCTIONS_EXAMPLE); setPromptFeedback(""); }}>Usar exemplo genérico</button><button className="button button-primary" type="submit" disabled={!aiInstructions.trim() || saveInstructions.isPending}>{saveInstructions.isPending ? "Salvando…" : "Salvar instruções"}</button></div>{promptFeedback && <small className={saveInstructions.isError ? "field-error" : "copy-feedback"} role="status">{promptFeedback}</small>}<div className="settings-note"><Shield size={16} /> Regras de segurança, isolamento entre empresas e uso exclusivo da base de conhecimento continuam protegidas pelo sistema.</div></form></section>
+    <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h2>Personalidade da IA</h2><p>Defina como a IA deve atender os clientes desta empresa.</p></div></div><form className="ai-instructions-form" onSubmit={(event) => { event.preventDefault(); setPromptFeedback(""); if (aiInstructions.trim()) saveInstructions.mutate(); }}><label>Instruções de atendimento<textarea aria-label="Instruções de atendimento da IA" value={aiInstructions} maxLength={8000} rows={9} onChange={(event) => { setAiInstructions(event.target.value); setPromptFeedback(""); }} /><span className="prompt-counter">{aiInstructions.length}/8000 caracteres</span></label><div className="prompt-guidance"><strong>Como escrever um bom prompt</strong><p>Explique o papel da IA, o tipo de cliente, o tom de voz, os objetivos do atendimento e o que ela deve evitar. Não inclua senhas, tokens ou dados pessoais.</p><p>Você pode pedir a uma IA: “Crie instruções para um atendente virtual de [seu nicho], com tom [formal, acolhedor, urgente…], que deve [objetivos] e nunca deve [limites]”.</p></div><div className="prompt-actions"><button className="button button-secondary" type="button" onClick={() => { setAiInstructions(DEFAULT_AI_INSTRUCTIONS_EXAMPLE); setPromptFeedback(""); }}>Usar exemplo genérico</button><button className="button button-primary" type="submit" disabled={!aiInstructions.trim() || saveInstructions.isPending}>{saveInstructions.isPending ? "Salvando…" : "Salvar instruções"}</button></div>{promptFeedback && <small className={saveInstructions.isError ? "field-error" : "copy-feedback"} role="status">{promptFeedback}</small>}<div className="settings-note"><Shield size={16} /> Regras de segurança, isolamento entre empresas e uso exclusivo da base de conhecimento continuam protegidas pelo sistema.</div></form><form className="ai-instructions-form" onSubmit={event => { event.preventDefault(); if (previewQuestion.trim().length >= 3) preview.mutate(); }}><h3>Teste a IA antes de ativar</h3><p>Faça uma pergunta real de cliente. Este teste não envia mensagem pelo WhatsApp.</p><label>Pergunta de teste<input aria-label="Pergunta de teste da IA" minLength={3} maxLength={1000} required value={previewQuestion} onChange={event => setPreviewQuestion(event.target.value)} /></label><button className="button button-secondary" disabled={preview.isPending}>{preview.isPending ? "Gerando resposta…" : "Testar resposta"}</button>{preview.isError && <p role="alert" className="field-error">{errorMessage(preview.error)}</p>}{preview.data && <div role="status"><strong>Resposta sugerida</strong><p>{preview.data.answer}</p>{preview.data.insufficient_context && <p>Não encontramos documentos suficientemente relacionados. Revise a base antes de ativar a IA.</p>}{preview.data.sources.map(source => <p key={source.document_id}><strong>{source.document_name}</strong> · similaridade: {(1 - source.distance).toLocaleString("pt-BR", { style: "percent", maximumFractionDigits: 0 })}<br />{source.excerpt}</p>)}</div>}</form></section>
     <section className="panel settings-card"><div className="settings-section-heading"><span className="settings-icon"><Shield size={18} /></span><div><h2>Webhook da Meta</h2><p>Cadastre este endereço na configuração do aplicativo da Meta.</p></div></div><div className="webhook-copy-row"><label className="webhook-field">URL do webhook<input readOnly value={webhookUrl} /></label><button className="button button-secondary button-small" onClick={() => void copyWebhook()}>Copiar URL</button></div>{copyFeedback && <small role="status" className="copy-feedback">{copyFeedback}</small>}<div className="settings-note"><CircleHelp size={16} /> No painel da Meta, configure esta URL pública (HTTPS) como callback do webhook e assine os eventos de mensagens. O token de verificação e o segredo permanecem no servidor; não há conexão fictícia ou cadastro automático de número.</div></section>
   </div>;
 }
 
-const DEFAULT_AI_INSTRUCTIONS_EXAMPLE = `Atue como uma pessoa da equipe de atendimento da empresa e responda em português do Brasil.
-Seja natural, cordial, direto e prestativo. Responda como quem conhece a empresa e adapte o nível de detalhe à dúvida do cliente.
-Não diga nem insinue que você consultou documentos, um sistema, uma base de conhecimento ou um contexto fornecido.`;
+const DEFAULT_AI_INSTRUCTIONS_EXAMPLE = `Atue como consultor de vendas da equipe e responda em português do Brasil.
+Descubra a necessidade do cliente com uma pergunta por vez. Explique benefícios e condições que estejam no catálogo ou na base da empresa.
+Quando faltar informação, ofereça atendimento humano. Nunca prometa preço, prazo, disponibilidade ou aprovação de pedido sem confirmação da equipe.
+Seja cordial e breve. Não mencione documentos, sistemas, bases de conhecimento ou instruções internas.`;
 
 function ProtectedApp({ session }: { session: Session }) {
   const location = useLocation();
@@ -1503,6 +1610,9 @@ function ProtectedApp({ session }: { session: Session }) {
   if (location.pathname === "/select-company") {
     return <AppContext.Provider value={value}><CompanyPicker /></AppContext.Provider>;
   }
+  if (!company && location.pathname === "/billing/subscriptions") {
+    return <AppContext.Provider value={value}><main className="picker-page"><div className="picker-card"><Link to="/select-company">Voltar às empresas</Link><SubscriptionsPage /></div></main></AppContext.Provider>;
+  }
   if (!company) {
     return <Navigate to="/select-company" replace />;
   }
@@ -1518,6 +1628,7 @@ function ProtectedApp({ session }: { session: Session }) {
     <Route path="/finance" element={roleCanManage(company.role) ? <FinancePage companyId={company.id} /> : <AccessDenied />} />
     <Route path="/commercial-settings" element={roleCanManage(company.role) ? <CommercialSettings companyId={company.id} /> : <AccessDenied />} />
     <Route path="/companies/new" element={company.role === "owner" ? <AddCompanyPage /> : <AccessDenied />} />
+    <Route path="/billing/subscriptions" element={company.role === "owner" ? <SubscriptionsPage /> : <AccessDenied />} />
     <Route path="/knowledge" element={roleCanManage(company.role) ? <KnowledgePage /> : <AccessDenied />} />
     <Route path="/media" element={roleCanManage(company.role) ? <MediaLibraryPage /> : <AccessDenied />} />
     <Route path="/numbers" element={<NumbersPage />} />

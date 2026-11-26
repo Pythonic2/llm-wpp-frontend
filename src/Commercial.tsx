@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { createContact, errorMessage, getCompany, http, listContacts, listConversations, listMediaAssets, listMembers, listOrders, companyPath, selectedBusinessUnit } from "./api";
+import { createContact, errorMessage, getCompany, getOrder, http, listContacts, listConversations, listMediaAssets, listMembers, listOrders, companyPath, selectedBusinessUnit } from "./api";
 import type { Membership } from "./types";
 import {
   cancelSale, correctSaleAttribution, createCategory, createSale, downloadReport, getFinanceDashboard,
@@ -101,6 +101,12 @@ export function SalesPage({ companyId }: Props) {
   const contacts = useQuery({ queryKey: ["commercial-contacts", companyId], queryFn: () => listContacts(companyId, { page_size: 100 }) });
   const conversations = useQuery({ queryKey: ["commercial-conversations", companyId], queryFn: () => listConversations(companyId, { page_size: 100 }) });
   const orders = useQuery({ queryKey: ["commercial-orders", companyId], queryFn: () => listOrders(companyId, "approved") });
+  const requestedOrderId = params.get("order");
+  const requestedOrder = useQuery({
+    queryKey: ["commercial-order", companyId, requestedOrderId],
+    queryFn: () => getOrder(companyId, requestedOrderId!),
+    enabled: !!requestedOrderId,
+  });
   const members = useQuery({ queryKey: ["commercial-members", companyId], queryFn: () => listMembers(companyId) });
   const catalog = useQuery({ queryKey: ["commercial-catalog", companyId, ""], queryFn: () => listCatalog(companyId, { page_size: 100 }) });
   const methods = useQuery({ queryKey: ["commercial-methods", companyId], queryFn: () => listPaymentMethods(companyId) });
@@ -113,6 +119,19 @@ export function SalesPage({ companyId }: Props) {
     const found = conversations.data?.results.find(c => String(c.id) === requested);
     if (found && !contactId) { setContactId(String(found.contact.id)); setConversationId(String(found.id)); }
   }, [params, conversations.data, contactId]);
+  useEffect(() => {
+    const order = requestedOrder.data;
+    if (!order || order.status !== "approved" || orderId === order.id) return;
+    setContactId(String(order.contact_id));
+    setConversationId(String(order.conversation));
+    setOrderId(order.id);
+    setLines(order.items.length ? order.items.map(item => ({
+      ...emptyLine(), name: item.name, quantity: item.quantity || "1",
+      unit_price: item.unit_price == null ? "" : String(item.unit_price),
+    })) : [emptyLine()]);
+    setFeedback("Confira itens, quantidades e preços antes de registrar a venda.");
+    setNewSale(true);
+  }, [requestedOrder.data, orderId]);
   const invalidate = async () => { await cache.invalidateQueries({ queryKey: ["commercial-sales", companyId] }); await cache.invalidateQueries({ queryKey: ["commercial-finance", companyId] }); };
   const submit = useMutation({ mutationFn: async () => {
     let id = Number(contactId);
@@ -140,12 +159,13 @@ export function SalesPage({ companyId }: Props) {
   const chooseCatalog = (index: number, itemId: string) => { const item = catalog.data?.results.find(i => i.id === itemId); editLine(index, item ? { catalog_item_id: item.id, name: item.name, kind: item.kind, unit_price: item.promotional_price || item.sale_price || "", unit_cost: item.unit_cost || "" } : { catalog_item_id: "", name: "", unit_price: "", unit_cost: "" }); };
   return <div className="page-stack commercial-page">
     <div className="commercial-heading"><div><small>GESTÃO COMERCIAL</small><h1>Vendas</h1><p>Confirme vendas, acompanhe recebimentos e preserve o histórico.</p></div><button className="button button-primary" onClick={() => { setNewSale(true); setFeedback(""); }}>Registrar venda</button></div>
+    {requestedOrder.isError && wrap(requestedOrder.error)}
     <Section title="Vendas registradas"><div className="commercial-inline"><select aria-label="Filtrar situação" value={status} onChange={e => setStatus(e.target.value)}><option value="">Todas as situações</option><option value="confirmed">Confirmadas</option><option value="cancelled">Canceladas</option></select><Link className="button button-secondary" to="/finance">Ver indicadores</Link></div>{sales.isError && wrap(sales.error)}{sales.isLoading && <p>Carregando vendas…</p>}<div className="commercial-table-wrap"><table className="commercial-table"><thead><tr><th>Data</th><th>Contato</th><th>Itens</th><th>Valor</th><th>Origem</th><th>Situação</th><th></th></tr></thead><tbody>{sales.data?.results.map(s => <tr key={s.id}><td>{day(s.sold_at)}</td><td>{contacts.data?.results.find(c => c.id === s.contact)?.name || `Contato #${s.contact}`}</td><td>{s.lines.map(l => l.name).join(", ")}</td><td>{money(s.total)}</td><td>{attributionLabel[s.attribution]}</td><td>{statusLabel[s.status]}</td><td><button className="button button-secondary button-small" onClick={() => { setSelected(s); setFeedback(""); }}>Detalhes</button></td></tr>)}</tbody></table>{!sales.data?.results.length && <p className="commercial-empty">Ainda não há vendas registradas.</p>}</div></Section>
     {newSale && <div className="commercial-overlay" role="presentation"><form className="commercial-dialog commercial-dialog-wide" onSubmit={e => { e.preventDefault(); setFeedback(""); submit.mutate(); }}><div className="commercial-dialog-head"><h2>Confirmar venda</h2><button type="button" aria-label="Fechar" onClick={() => setNewSale(false)}>×</button></div><p>Oportunidade ganha e pedido aprovado não confirmam venda nem pagamento. Registre o fechamento aqui.</p><div className="commercial-form-grid">
-      <Field label="Contato"><select value={contactId} onChange={e => { setContactId(e.target.value); setConversationId(""); setOrderId(""); }}><option value="">Novo contato manual</option>{contacts.data?.results.map(c => <option key={c.id} value={c.id}>{c.name || c.phone} · {c.phone}</option>)}</select></Field>
+      <Field label="Contato"><select value={contactId} onChange={e => { setContactId(e.target.value); setConversationId(""); setOrderId(""); }}><option value="">Novo contato manual</option>{contacts.data?.results.map(c => <option key={c.id} value={c.id}>{c.name || c.phone} · {c.phone}</option>)}{requestedOrder.data && !contacts.data?.results.some(c => c.id === requestedOrder.data.contact_id) && <option value={requestedOrder.data.contact_id}>{requestedOrder.data.customer_name || requestedOrder.data.customer_phone} · {requestedOrder.data.customer_phone}</option>}</select></Field>
       {!contactId && <><Field label="Nome do novo contato"><input required value={contactName} onChange={e => setContactName(e.target.value)} /></Field><Field label="Telefone do novo contato"><input required value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></Field></>}
-      {selectedContact && <Field label="Conversa (opcional)"><select value={conversationId} onChange={e => { setConversationId(e.target.value); setOrderId(""); }}><option value="">Sem conversa</option>{relatedConversations.map(c => <option key={c.id} value={c.id}>Conversa #{c.id} · {c.opportunity_status || c.status}</option>)}</select></Field>}
-      {conversationId && <Field label="Pedido aprovado (opcional)"><select value={orderId} onChange={e => setOrderId(e.target.value)}><option value="">Sem pedido</option>{relatedOrders.map(o => <option key={o.id} value={o.id}>{o.customer_name || o.id} · {money(o.total)}</option>)}</select></Field>}
+      {(selectedContact || requestedOrder.data?.contact_id === Number(contactId)) && <Field label="Conversa (opcional)"><select value={conversationId} onChange={e => { setConversationId(e.target.value); setOrderId(""); }}><option value="">Sem conversa</option>{relatedConversations.map(c => <option key={c.id} value={c.id}>Conversa #{c.id} · {c.opportunity_status || c.status}</option>)}{requestedOrder.data && !relatedConversations.some(c => c.id === requestedOrder.data.conversation) && <option value={requestedOrder.data.conversation}>Conversa #{requestedOrder.data.conversation} · pedido aprovado</option>}</select></Field>}
+      {conversationId && <Field label="Pedido aprovado (opcional)"><select value={orderId} onChange={e => setOrderId(e.target.value)}><option value="">Sem pedido</option>{relatedOrders.map(o => <option key={o.id} value={o.id}>{o.customer_name || o.id} · {money(o.total)}</option>)}{requestedOrder.data && !relatedOrders.some(o => o.id === requestedOrder.data.id) && <option value={requestedOrder.data.id}>{requestedOrder.data.customer_name || requestedOrder.data.id} · {money(requestedOrder.data.total)}</option>}</select></Field>}
       <Field label="Responsável (opcional)"><select value={responsibleId} onChange={e => setResponsibleId(e.target.value)}><option value="">Usar responsável da conversa ou meu usuário</option>{members.data?.map((m: Membership) => <option key={m.user.id} value={m.user.id}>{m.user.first_name || m.user.username}</option>)}</select></Field>
       <Field label="Data da venda"><input type="datetime-local" required value={soldAt} onChange={e => setSoldAt(e.target.value)} /></Field>
     </div><h3>Produtos e serviços vendidos</h3>{lines.map((line, i) => <div className="commercial-line" key={i}><Field label="Item"><select value={line.catalog_item_id} onChange={e => chooseCatalog(i, e.target.value)}><option value="">Item avulso</option>{catalog.data?.results.filter(x => x.is_active).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>{!line.catalog_item_id && <><Field label="Nome"><input required value={line.name} onChange={e => editLine(i, { name: e.target.value })} /></Field><Field label="Tipo"><select value={line.kind} onChange={e => editLine(i, { kind: e.target.value as DraftLine["kind"] })}><option value="service">Serviço</option><option value="product">Produto</option></select></Field></>}<Field label="Qtd."><input type="number" required min="0.001" step="0.001" value={line.quantity} onChange={e => editLine(i, { quantity: e.target.value })} /></Field><Field label="Preço negociado"><input type="number" required min="0" step="0.01" value={line.unit_price} onChange={e => editLine(i, { unit_price: e.target.value })} /></Field><Field label="Desconto"><input type="number" min="0" step="0.01" value={line.discount_amount} onChange={e => editLine(i, { discount_amount: e.target.value })} /></Field><Field label="Custo (opcional)"><input type="number" min="0" step="0.01" value={line.unit_cost} onChange={e => editLine(i, { unit_cost: e.target.value })} /></Field><button type="button" className="button button-quiet button-small" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>Remover</button></div>)}<button type="button" className="button button-secondary button-small" onClick={() => setLines([...lines, emptyLine()])}>Adicionar linha</button>
