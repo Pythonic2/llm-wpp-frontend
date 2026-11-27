@@ -149,6 +149,7 @@ import { DocumentShareControl, UnitManager, UnitSwitcher } from "./BusinessUnits
 import { listBusinessUnits, unitsKey } from "./businessUnitsApi";
 import { ConfirmProvider } from "./ConfirmDialog";
 import { useConfirm } from "./ConfirmContext";
+import { TourGuide } from "./TourGuide";
 
 const AppContext = createContext<{
   session: Session;
@@ -475,6 +476,7 @@ function AppShell({ children }: PropsWithChildren) {
           <div className="breadcrumb"><span>Gest Tech</span><span className="crumb-slash">/</span><strong>{navItems.find((item) => item.to === window.location.pathname)?.label ?? "Painel"}</strong></div>
           {company && <UnitSwitcher companyId={company.id} />}
           <div className="topbar-right">
+            <TourGuide role={company?.role ?? "agent"} />
             <span className="system-status"><i /> Sessão autenticada</span>
             <span className="topbar-avatar">{displayName(session.user).slice(0, 1).toUpperCase()}</span>
           </div>
@@ -667,7 +669,9 @@ function InboxPage() {
     getPreviousPageParam: (page) => pageNumberFromLink(page.previous),
     getNextPageParam: (page) => pageNumberFromLink(page.next),
     enabled: !!selectedId && !!companyId,
-    refetchInterval: sendPreview?.phase === "sending" && sendPreview.conversationId === selectedId ? false : 5_000,
+    refetchInterval: sendPreview?.phase === "sending" && sendPreview.conversationId === selectedId
+      ? false : unresolvedSend && unresolvedMessageId && pendingSendRef.current?.conversationId === selectedId
+        ? 1_000 : 5_000,
   });
   const templates = useQuery({
     queryKey: ["conversation-templates", companyId, selectedId],
@@ -956,6 +960,7 @@ function InboxPage() {
               <button className="button button-primary send-button" type="submit" disabled={!message.trim() || selected.status === "closed" || sendBlocked}><Send size={16} /><span>{send.isPending ? "Enviando…" : "Enviar"}</span></button>
             </div>
             {sendBlocked && pendingSendRef.current && pendingSendRef.current.conversationId !== selectedId && <small className="send-blocked-note" role="status">Há um envio em andamento em outra conversa. Aguarde ou volte a ela para consultar a tentativa.</small>}
+            {send.isPending && pendingSendRef.current?.conversationId === selectedId && <small className="send-blocked-note">Você pode escrever a próxima mensagem enquanto esta é confirmada.</small>}
             {sendFeedback && sendFeedbackConversationId === selectedId && <small className="field-error" role="status">{sendFeedback} {pendingSendRef.current && unresolvedSend && <button type="button" disabled={inspectingSend} onClick={() => void inspectSend()}>{inspectingSend ? "Consultando…" : "Consultar tentativa"}</button>} {retryAvailable && <button type="button" onClick={retrySend}>Repetir tentativa</button>}</small>}
             <button type="button" className="button button-secondary button-small" disabled={selected.status === "closed"} onClick={() => setTemplatesOpen(open => !open)}>Templates aprovados</button>
             {templatesOpen && <div className="settings-note">{templates.isPending ? "Consultando templates…" : templates.isError ? errorMessage(templates.error) : !templates.data?.consent_registered ? "Registre o consentimento de retorno no contato antes de enviar template." : templates.data.templates.length ? templates.data.templates.map(template => <div key={`${template.name}-${template.language}`}><p>{template.body}</p><button type="button" className="button button-secondary button-small" disabled={templateSend.isPending || sendBlocked} onClick={() => submitTemplate(template.name, template.language)}>Enviar {template.name}</button></div>) : "Nenhum template de utilidade aprovado e sem variáveis foi encontrado nesta conta Meta."}</div>}
