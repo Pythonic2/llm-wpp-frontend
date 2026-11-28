@@ -30,3 +30,11 @@ O webhook exige assinatura; não enfraquecer essa verificação nem aceitar dupl
 ## Retomada em 27/11/2026
 
 Após a atualização do plano pelo usuário, uma consulta somente leitura ao Neon confirmou conexão e schema configurado. A última migration aplicada é `0022_plan_pricing`; `0023` a `0025` continuam pendentes. O acesso SSH funciona em `pi@192.168.0.5`; os containers de produção ainda usam as revisões antigas do backend (`9b222917...`) e do frontend (`afe9802...`). As configurações atuais das stacks foram preservadas em diretório privado no Raspberry antes de qualquer atualização. O frontend passou em 47 testes, lint e build; `manage.py check` passou. O `docker compose config` do backend foi validado com valores fictícios para não expor credenciais locais durante interpolação.
+
+## Publicação e verificação em 27/11/2026
+
+- Backup privado do schema `crm` em `/home/pi/gesttech-release-20261127/backup/crm-pre-0023-20261127.dump`, SHA-256 `e7b8f407470d4aa2434e460d3fb6a469c0b93fbb0c731587d6006141b63e49a3`, catálogo legível e dados de 46 tabelas.
+- Migrations `0023`, `0024` e `0025` aplicadas uma única vez após parar backend, worker e agendador antigos. Os três containers novos executam a revisão `41e2f4af...`; o frontend executa `70371da7...`.
+- `/`, `/login`, `/api/v1/auth/csrf/`, `/api/v1/public/prices/` e assets versionados retornaram 200 no domínio CRM. Rotas de unidades e uso da IA retornaram 403 sem sessão, confirmando que existem e exigem autenticação. Worker Celery respondeu ao ping; 17 webhooks recentes retornaram 200, sem 500 ou reinícios nos logs verificados.
+- Digests publicados em `main` dos dois repositórios e aplicados no Raspberry. O cache do Portainer para o backend sincronizou pelo GitOps; o do frontend foi alinhado ao manifesto publicado e à imagem em execução, preservando o Compose anterior no backup privado.
+- Login autenticado e operações de cobrança não foram executados como teste por falta de conta de teste e por envolverem dados reais. A chave Asaas do arquivo privado difere do valor efetivo recebido pelo container após a interpolação do Compose; a configuração foi preservada e exige correção separada autorizada.
